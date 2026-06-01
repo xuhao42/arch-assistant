@@ -157,35 +157,35 @@ def verify_graph() -> dict:
     with driver.session() as session:
         row = session.run(
             """
-            CALL {
+            CALL () {
                 MATCH (s:ArchitectureStyle)
                 RETURN count(s) AS styles
             }
-            CALL {
+            CALL () {
                 MATCH (c:Characteristic)
                 RETURN count(c) AS characteristics
             }
-            CALL {
+            CALL () {
                 MATCH (u:UseCase)
                 RETURN count(u) AS usecases
             }
-            CALL {
+            CALL () {
                 MATCH (k:Keyword)
                 RETURN count(k) AS keywords
             }
-            CALL {
+            CALL () {
                 MATCH ()-[hp:HAS_PRO]->()
                 RETURN count(hp) AS has_pro
             }
-            CALL {
+            CALL () {
                 MATCH ()-[hc:HAS_CON]->()
                 RETURN count(hc) AS has_con
             }
-            CALL {
+            CALL () {
                 MATCH ()-[sf:SUITABLE_FOR]->()
                 RETURN count(sf) AS suitable_for
             }
-            CALL {
+            CALL () {
                 MATCH ()-[hk:HAS_KEYWORD]->()
                 RETURN count(hk) AS has_keyword
             }
@@ -347,7 +347,7 @@ if __name__ == "__main__":
         verify_only = "--verify-only" in sys.argv
         if verify_only:
             stats = verify_graph()
-            print("\n📋 Neo4j 图谱验证结果:")
+            print("\nNeo4j 图谱验证结果:")
             print(f"   ArchitectureStyle: {stats.get('styles', 0)}")
             print(f"   Characteristic: {stats.get('characteristics', 0)}")
             print(f"   UseCase: {stats.get('usecases', 0)}")

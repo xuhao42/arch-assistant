@@ -168,6 +168,14 @@ class LlmConfigTests(unittest.TestCase):
 
 
 class InitNeo4jTests(unittest.TestCase):
+    def test_verify_query_uses_scoped_subqueries(self):
+        session = RecordingSession()
+        module = load_init_neo4j(FakeDriver(session))
+        module.verify_graph()
+        query = session.queries[0][0]
+        self.assertEqual(query.count("CALL () {"), 8)
+        self.assertNotIn("CALL {", query)
+
     def test_verify_requires_core_relationships(self):
         module = load_init_neo4j()
         stats = {
