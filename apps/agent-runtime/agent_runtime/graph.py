@@ -74,18 +74,35 @@ class AgentState(TypedDict):
 # ── LLM ────────────────────────────────────────────
 _llm: ChatOpenAI | None = None
 
+def resolve_llm_config() -> dict[str, str]:
+    """Resolve one provider's credentials and defaults without mixing providers."""
+    deepseek_api_key = _read_env_value("DEEPSEEK_API_KEY")
+    if deepseek_api_key:
+        return {
+            "api_key": deepseek_api_key,
+            "base_url": _read_env_value("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1",
+            "model": _read_env_value("DEEPSEEK_MODEL") or "deepseek-chat",
+        }
+
+    openai_api_key = _read_env_value("OPENAI_API_KEY")
+    if openai_api_key:
+        return {
+            "api_key": openai_api_key,
+            "base_url": _read_env_value("OPENAI_BASE_URL") or "https://api.openai.com/v1",
+            "model": _read_env_value("OPENAI_MODEL") or "gpt-4o-mini",
+        }
+
+    raise ValueError("Missing API key: set DEEPSEEK_API_KEY or OPENAI_API_KEY in .env")
+
 def get_llm() -> ChatOpenAI:
     global _llm
     if _llm is not None:
         return _llm
-    api_key = _read_env_value("DEEPSEEK_API_KEY") or _read_env_value("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("Missing API key: set DEEPSEEK_API_KEY or OPENAI_API_KEY in .env")
+    config = resolve_llm_config()
     _llm = ChatOpenAI(
-        model=_read_env_value("DEEPSEEK_MODEL") or "deepseek-chat",
-        api_key=api_key,
-        openai_api_key=api_key,
-        base_url=_read_env_value("DEEPSEEK_BASE_URL") or _read_env_value("OPENAI_BASE_URL") or "https://api.deepseek.com/v1",
+        model=config["model"],
+        api_key=config["api_key"],
+        base_url=config["base_url"],
         temperature=0.3,
         max_tokens=2048,
     )

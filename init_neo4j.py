@@ -197,6 +197,21 @@ def verify_graph() -> dict:
     return result
 
 
+def graph_has_required_data(stats: dict) -> bool:
+    """Return whether all core labels and managed relation types contain data."""
+    required_counts = (
+        "styles",
+        "characteristics",
+        "usecases",
+        "keywords",
+        "has_pro",
+        "has_con",
+        "suitable_for",
+        "has_keyword",
+    )
+    return all(stats.get(name, 0) > 0 for name in required_counts)
+
+
 def init_graph(reset: bool = False):
     driver = GraphDatabase.driver(URI, auth=AUTH)
     with driver.session() as session:
@@ -223,6 +238,13 @@ def init_graph(reset: bool = False):
                  description=style["description"],
                  keywords=style["keywords"],
                  anti_keywords=style["anti_keywords"])
+
+            # Remove managed relationships before rebuilding them from STYLES.
+            # This keeps idempotent updates from retaining removed keywords or scenes.
+            session.run("""
+                MATCH (s:ArchitectureStyle {name: $name})-[r:HAS_PRO|HAS_CON|SUITABLE_FOR|HAS_KEYWORD]->()
+                DELETE r
+            """, name=name)
 
             # 创建优点 (Characteristic: pro)
             for pro in style["pros"]:
@@ -334,13 +356,8 @@ if __name__ == "__main__":
             print(f"   HAS_CON: {stats.get('has_con', 0)}")
             print(f"   SUITABLE_FOR: {stats.get('suitable_for', 0)}")
             print(f"   HAS_KEYWORD: {stats.get('has_keyword', 0)}")
-            if min(
-                stats.get("styles", 0),
-                stats.get("characteristics", 0),
-                stats.get("usecases", 0),
-                stats.get("keywords", 0),
-            ) == 0:
-                print("\n验证未通过：至少一种核心节点不存在，请先运行初始化。")
+            if not graph_has_required_data(stats):
+                print("\n验证未通过：至少一种核心节点或关系不存在，请先运行初始化。")
                 sys.exit(2)
             print("\n验证通过：核心节点与关系已存在。")
         else:

@@ -2,11 +2,11 @@
 
 本文档覆盖 5 项验收要求：
 
-1. 检查初始化脚本可运行  
-2. 补充图谱结构说明（节点类型 + 关系类型）  
-3. 准备 Neo4j Browser 截图  
-4. 准备至少 3 条 Cypher 查询  
-5. 说明 Neo4j 不可用时 fallback 到 JSON 的机制  
+1. 检查初始化脚本可运行
+2. 补充图谱结构说明（节点类型 + 关系类型）
+3. 准备 Neo4j Browser 截图
+4. 准备至少 3 条 Cypher 查询
+5. 说明 Neo4j 不可用时 fallback 到 JSON 的机制
 
 ---
 
@@ -31,6 +31,7 @@ python init_neo4j.py --verify-only
 
 - 能创建/更新 `ArchitectureStyle`、`Characteristic`、`UseCase`、`Keyword` 节点。
 - 能创建核心关系：`HAS_PRO`、`HAS_CON`、`SUITABLE_FOR`、`HAS_KEYWORD`。
+- `--verify-only` 会同时检查核心节点和核心关系，任一缺失都会返回失败。
 - 控制台会输出统计信息（节点数、关系数）用于验收记录。
 
 ---
@@ -70,8 +71,8 @@ graph LR
 
 ### 3.1 打开方式
 
-1. 确保 Neo4j 已启动  
-2. 浏览器访问 `http://localhost:7474/`  
+1. 确保 Neo4j 已启动
+2. 浏览器访问 `http://localhost:7474/`
 3. 登录后执行查询（见第 4 节）
 
 ### 3.2 建议截图内容
@@ -129,12 +130,11 @@ RETURN s.name, collect(DISTINCT p.name) AS pros, collect(DISTINCT c.name) AS con
 
 机制说明：
 
-1. `Neo4jKnowledgeBase.is_available()` 先检测 Neo4j 是否可连接。  
-2. 如果连接失败/认证失败，记录不可用原因，返回不可用状态。  
-3. 上层 `build_knowledge_summary()` 自动回退到 `data/architecture_styles.json`。  
-4. 架构推荐主流程继续执行，不因为 Neo4j 不可用而中断。  
+1. `Neo4jKnowledgeBase.is_available()` 先检测 Neo4j 是否可连接。
+2. 如果连接失败、认证失败或后续查询失败，记录不可用原因，返回不可用状态。
+3. 上层 `build_knowledge_summary()` 自动回退到 `data/architecture_styles.json`。
+4. 架构推荐主流程继续执行，不因为 Neo4j 不可用而中断。
 
 答辩可用一句话：
 
 > Neo4j 作为图谱增强层，提升可查询性与可解释性；当 Neo4j 不可用时，系统自动回退 JSON 知识库，保证推荐主流程稳定可运行。
-

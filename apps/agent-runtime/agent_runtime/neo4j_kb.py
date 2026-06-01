@@ -10,7 +10,6 @@ Neo4j 知识图谱查询模块
 import os
 from typing import Optional
 from neo4j import GraphDatabase
-from neo4j.exceptions import ServiceUnavailable, AuthError
 from loguru import logger
 
 
@@ -35,6 +34,11 @@ class Neo4jKnowledgeBase:
             self._driver = GraphDatabase.driver(self.uri, auth=self.auth)
         return self._driver
 
+    def _mark_unavailable(self, error: Exception, operation: str) -> None:
+        self._available = False
+        self._unavailable_reason = f"{operation}: {error}"
+        logger.warning(f"⚠️ Neo4j {operation}失败，回退到 JSON 知识库: {error}")
+
     def is_available(self) -> bool:
         """检测 Neo4j 是否可用。
 
@@ -49,10 +53,8 @@ class Neo4jKnowledgeBase:
             self._available = True
             self._unavailable_reason = ""
             logger.info("✅ Neo4j 知识图谱连接成功")
-        except (ServiceUnavailable, AuthError, OSError) as e:
-            self._available = False
-            self._unavailable_reason = str(e)
-            logger.warning(f"⚠️ Neo4j 不可用，回退到 JSON 知识库: {e}")
+        except Exception as e:
+            self._mark_unavailable(e, "连接检查")
         return self._available
 
     @property
@@ -83,7 +85,7 @@ class Neo4jKnowledgeBase:
                 ).single()
                 return dict(row) if row else {}
         except Exception as e:
-            logger.warning(f"Neo4j graph stats query failed: {e}")
+            self._mark_unavailable(e, "统计查询")
             return {}
 
     def get_all_styles_summary(self) -> list[dict]:
@@ -109,7 +111,7 @@ class Neo4jKnowledgeBase:
                 """)
                 return [dict(record) for record in result]
         except Exception as e:
-            logger.warning(f"Neo4j style summary query failed: {e}")
+            self._mark_unavailable(e, "架构摘要查询")
             return []
 
     def get_styles_by_keyword(self, keywords: list[str], limit: int = 5) -> list[dict]:
@@ -135,48 +137,56 @@ class Neo4jKnowledgeBase:
                 """, keywords=keywords, limit=limit)
                 return [dict(record) for record in result]
         except Exception as e:
-            logger.warning(f"Neo4j keyword query failed: {e}")
+            self._mark_unavailable(e, "关键词查询")
             return []
 
     def get_style_detail(self, style_name: str) -> Optional[dict]:
         """获取单个架构风格的完整信息"""
         if not self.is_available():
             return None
-        with self.driver.session() as session:
-            result = session.run("""
-                MATCH (a:ArchitectureStyle {name: $name})
-                OPTIONAL MATCH (a)-[:HAS_PRO]->(p:Characteristic)
-                OPTIONAL MATCH (a)-[:HAS_CON]->(c:Characteristic)
-                OPTIONAL MATCH (a)-[:SUITABLE_FOR]->(u:UseCase)
-                OPTIONAL MATCH (a)-[:COMPLEMENTS]->(comp:ArchitectureStyle)
-                OPTIONAL MATCH (a)-[:RELATED_TO]->(rel:ArchitectureStyle)
-                RETURN a.name AS name,
-                       a.category AS category,
-                       a.description AS desc,
-                       a.keywords AS keywords,
-                       a.anti_keywords AS anti_keywords,
-                       collect(DISTINCT p.name) AS pros,
-                       collect(DISTINCT c.name) AS cons,
-                       collect(DISTINCT u.name) AS usecases,
-                       collect(DISTINCT comp.name) AS complements,
-                       collect(DISTINCT rel.name) AS related
-            """, name=style_name)
-            record = result.single()
-            return dict(record) if record else None
+        try:
+            with self.driver.session() as session:
+                result = session.run("""
+                    MATCH (a:ArchitectureStyle {name: $name})
+                    OPTIONAL MATCH (a)-[:HAS_PRO]->(p:Characteristic)
+                    OPTIONAL MATCH (a)-[:HAS_CON]->(c:Characteristic)
+                    OPTIONAL MATCH (a)-[:SUITABLE_FOR]->(u:UseCase)
+                    OPTIONAL MATCH (a)-[:COMPLEMENTS]->(comp:ArchitectureStyle)
+                    OPTIONAL MATCH (a)-[:RELATED_TO]->(rel:ArchitectureStyle)
+                    RETURN a.name AS name,
+                           a.category AS category,
+                           a.description AS desc,
+                           a.keywords AS keywords,
+                           a.anti_keywords AS anti_keywords,
+                           collect(DISTINCT p.name) AS pros,
+                           collect(DISTINCT c.name) AS cons,
+                           collect(DISTINCT u.name) AS usecases,
+                           collect(DISTINCT comp.name) AS complements,
+                           collect(DISTINCT rel.name) AS related
+                """, name=style_name)
+                record = result.single()
+                return dict(record) if record else None
+        except Exception as e:
+            self._mark_unavailable(e, "架构详情查询")
+            return None
 
     def get_complementary_styles(self, style_name: str) -> list[dict]:
         """获取某个架构风格的互补架构（通过 COMPLEMENTS 边）"""
         if not self.is_available():
             return []
-        with self.driver.session() as session:
-            result = session.run("""
-                MATCH (a:ArchitectureStyle {name: $name})-[r:COMPLEMENTS]->(b:ArchitectureStyle)
-                RETURN b.name AS name, b.description AS desc, r.reason AS reason
-                UNION
-                MATCH (b:ArchitectureStyle)-[r:COMPLEMENTS]->(a:ArchitectureStyle {name: $name})
-                RETURN b.name AS name, b.description AS desc, r.reason AS reason
-            """, name=style_name)
-            return [dict(record) for record in result]
+        try:
+            with self.driver.session() as session:
+                result = session.run("""
+                    MATCH (a:ArchitectureStyle {name: $name})-[r:COMPLEMENTS]->(b:ArchitectureStyle)
+                    RETURN b.name AS name, b.description AS desc, r.reason AS reason
+                    UNION
+                    MATCH (b:ArchitectureStyle)-[r:COMPLEMENTS]->(a:ArchitectureStyle {name: $name})
+                    RETURN b.name AS name, b.description AS desc, r.reason AS reason
+                """, name=style_name)
+                return [dict(record) for record in result]
+        except Exception as e:
+            self._mark_unavailable(e, "互补关系查询")
+            return []
 
     def query_architecture_context(self, features: list[str]) -> str:
         """核心方法：根据提取的需求特征，生成图查询上下文文本。
@@ -189,48 +199,58 @@ class Neo4jKnowledgeBase:
         if not self.is_available():
             return ""
 
-        lines = ["【Neo4j 知识图谱上下文】"]
+        try:
+            lines = ["【Neo4j 知识图谱上下文】"]
 
-        # 1. 关键词触发：看哪些架构匹配到当前特征
-        matched = self.get_styles_by_keyword(features, limit=8)
-        if matched:
-            lines.append("\n📌 关键词匹配到的架构风格:")
-            for m in matched:
-                kw_match = m.get('matches', 0)
-                lines.append(
-                    f"  • {m['name']} [{m['category']}] "
-                    f"(关键词命中: {kw_match}) | "
-                    f"优点: {', '.join(m.get('pros', [])[:3])} | "
-                    f"缺点: {', '.join(m.get('cons', [])[:2])}"
-                )
+            # 1. 关键词触发：看哪些架构匹配到当前特征
+            matched = self.get_styles_by_keyword(features, limit=8)
+            if not self.is_available():
+                return ""
+            if matched:
+                lines.append("\n📌 关键词匹配到的架构风格:")
+                for m in matched:
+                    kw_match = m.get('matches', 0)
+                    lines.append(
+                        f"  • {m['name']} [{m['category']}] "
+                        f"(关键词命中: {kw_match}) | "
+                        f"优点: {', '.join(m.get('pros', [])[:3])} | "
+                        f"缺点: {', '.join(m.get('cons', [])[:2])}"
+                    )
 
-        # 2. 全量架构摘要（含触发词和排除词）
-        all_styles = self.get_all_styles_summary()
-        if all_styles:
-            lines.append("\n📋 完整架构知识库（含触发/排除规则）:")
-            for s in all_styles:
-                kws = ', '.join(s.get('keywords', [])[:4])
-                antis = ', '.join(s.get('anti_keywords', [])[:3])
-                lines.append(
-                    f"  - {s['name']} [{s.get('category','')}] | "
-                    f"触发词: {kws} | "
-                    f"排除词: {antis} | "
-                    f"优点: {', '.join(s.get('pros', [])[:2])}"
-                )
+            # 2. 全量架构摘要（含触发词和排除词）
+            all_styles = self.get_all_styles_summary()
+            if not self.is_available():
+                return ""
+            if all_styles:
+                lines.append("\n📋 完整架构知识库（含触发/排除规则）:")
+                for s in all_styles:
+                    kws = ', '.join(s.get('keywords', [])[:4])
+                    antis = ', '.join(s.get('anti_keywords', [])[:3])
+                    lines.append(
+                        f"  - {s['name']} [{s.get('category','')}] | "
+                        f"触发词: {kws} | "
+                        f"排除词: {antis} | "
+                        f"优点: {', '.join(s.get('pros', [])[:2])}"
+                    )
 
-        # 3. 互补关系
-        lines.append("\n🔗 架构间互补关系:")
-        complements_found = False
-        for s in all_styles[:12]:
-            comps = self.get_complementary_styles(s.get('name', ''))
-            if comps:
-                complements_found = True
-                for c in comps:
-                    lines.append(f"  {s['name']} ⟷ {c['name']}: {c.get('reason','优势互补')}")
-        if not complements_found:
-            lines.append("  (暂无)")
+            # 3. 互补关系
+            lines.append("\n🔗 架构间互补关系:")
+            complements_found = False
+            for s in all_styles[:12]:
+                comps = self.get_complementary_styles(s.get('name', ''))
+                if not self.is_available():
+                    return ""
+                if comps:
+                    complements_found = True
+                    for c in comps:
+                        lines.append(f"  {s['name']} ⟷ {c['name']}: {c.get('reason','优势互补')}")
+            if not complements_found:
+                lines.append("  (暂无)")
 
-        return "\n".join(lines)
+            return "\n".join(lines)
+        except Exception as e:
+            self._mark_unavailable(e, "上下文查询")
+            return ""
 
     def close(self):
         if self._driver:
