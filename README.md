@@ -190,7 +190,9 @@ curl.exe -N -X POST http://127.0.0.1:3000/api/v1/analyze/stream ^
 
 ## 已知说明
 
-- Neo4j 为可选增强项。当前系统优先尝试 Neo4j，连接不可用时自动回退到 JSON 知识库。`init_neo4j.py` 可初始化架构风格、优缺点、适用场景、关键词和架构互补关系。
+- `data/architecture_styles.json` 是 21 种架构风格的唯一数据源。`.venv-win\Scripts\python.exe init_neo4j.py` 会将 JSON 归一化为 Neo4j 节点与关系；架构间关系独立保存在 `data/architecture_relations.json`。
+- Neo4j 为可选增强项。连接不可用时系统自动回退 JSON；`POST /api/v1/knowledge` 仍会保存 JSON 并返回 `fallback=true`。Neo4j 恢复后，后续请求会触发全量对账。
+- 本地脚本使用 `NEO4J_URI`；Docker Compose 默认使用 `NEO4J_DOCKER_URI=bolt://host.docker.internal:7687` 访问宿主机 Neo4j。
 - 项目已包含 CodeGraph 配置，`.codex/config.toml` 绑定当前仓库，便于用 `codegraph_*` 工具快速定位符号、调用关系和文件结构。
 - 语音输入依赖浏览器 Web Speech API，推荐使用 Chrome 或 Edge，并通过 `localhost` 访问。
 - `data/learned_cases.json` 是运行时学习数据，会随演示增长；当前仓库保留了已学习案例，用于展示相似案例命中和 Few-shot 上下文注入。

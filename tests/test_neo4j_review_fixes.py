@@ -19,6 +19,9 @@ def load_module(name: str, path: Path):
 
 
 class FakeResult:
+    def __iter__(self):
+        return iter([])
+
     def single(self):
         return {
             "styles": 12,
@@ -88,8 +91,15 @@ def load_init_neo4j(driver=None):
 
 def load_neo4j_kb():
     install_neo4j_stubs()
+    package = types.ModuleType("agent_runtime")
+    package.__path__ = []
+    sys.modules["agent_runtime"] = package
+    load_module(
+        "agent_runtime.architecture_styles",
+        ROOT / "apps" / "agent-runtime" / "agent_runtime" / "architecture_styles.py",
+    )
     return load_module(
-        "test_neo4j_kb",
+        "agent_runtime.neo4j_kb",
         ROOT / "apps" / "agent-runtime" / "agent_runtime" / "neo4j_kb.py",
     )
 
@@ -168,6 +178,10 @@ class LlmConfigTests(unittest.TestCase):
 
 
 class InitNeo4jTests(unittest.TestCase):
+    def test_init_script_does_not_embed_architecture_styles(self):
+        module = load_init_neo4j()
+        self.assertFalse(hasattr(module, "STYLES"))
+
     def test_verify_query_uses_scoped_subqueries(self):
         session = RecordingSession()
         module = load_init_neo4j(FakeDriver(session))
@@ -201,7 +215,7 @@ class InitNeo4jTests(unittest.TestCase):
             if "DELETE r" in query
             and "HAS_PRO|HAS_CON|SUITABLE_FOR|HAS_KEYWORD" in query
         ]
-        self.assertEqual(len(cleanup_queries), len(module.STYLES))
+        self.assertEqual(len(cleanup_queries), 21)
 
 
 class Neo4jFallbackTests(unittest.TestCase):
@@ -209,6 +223,7 @@ class Neo4jFallbackTests(unittest.TestCase):
         module = load_neo4j_kb()
         kb = module.Neo4jKnowledgeBase()
         kb._available = True
+        kb._reconcile_required = False
         kb.get_styles_by_keyword = lambda *args, **kwargs: []
         kb.get_all_styles_summary = lambda: [{"name": "CQRS"}]
 
@@ -219,6 +234,88 @@ class Neo4jFallbackTests(unittest.TestCase):
         self.assertEqual(kb.query_architecture_context([]), "")
         self.assertFalse(kb._available)
         self.assertIn("query failed", kb.unavailable_reason)
+
+
+class Neo4jSyncTests(unittest.TestCase):
+    def test_upsert_style_rebuilds_all_managed_relationships(self):
+        module = load_neo4j_kb()
+        kb = module.Neo4jKnowledgeBase()
+        session = RecordingSession()
+        style = {
+            "name": "Test",
+            "category": "Category",
+            "description": "Description",
+            "keywords": ["alias", "scene", "tech"],
+            "anti_keywords": ["avoid"],
+            "pros": ["pro"],
+            "cons": ["con"],
+            "scenes": ["scene"],
+        }
+
+        kb._upsert_style(session, style)
+
+        queries = [query for query, _ in session.queries]
+        self.assertTrue(any("SET s.category = $category" in query for query in queries))
+        self.assertTrue(any("HAS_PRO|HAS_CON|SUITABLE_FOR|HAS_KEYWORD" in query for query in queries))
+        self.assertTrue(any("MERGE (s)-[:HAS_PRO]->(c)" in query for query in queries))
+        self.assertTrue(any("MERGE (s)-[:HAS_CON]->(c)" in query for query in queries))
+        self.assertTrue(any("MERGE (s)-[:SUITABLE_FOR]->(u)" in query for query in queries))
+        self.assertTrue(any("MERGE (s)-[:HAS_KEYWORD]->(k)" in query for query in queries))
+
+    def test_reconcile_deletes_stale_styles_syncs_relations_and_cleans_orphans(self):
+        module = load_neo4j_kb()
+        session = RecordingSession()
+        kb = module.Neo4jKnowledgeBase()
+        kb._driver = FakeDriver(session)
+        kb._available = True
+        styles = [{
+            "name": "A",
+            "category": "",
+            "description": "",
+            "keywords": [],
+            "anti_keywords": [],
+            "pros": [],
+            "cons": [],
+            "scenes": [],
+        }]
+        relations = [{"from": "A", "type": "RELATED_TO", "to": "B", "reason": "reason"}]
+
+        kb.reconcile_from_json(styles=styles, relations=relations)
+
+        queries = [query for query, _ in session.queries]
+        self.assertTrue(any("WHERE NOT s.name IN $names" in query for query in queries))
+        self.assertTrue(any("DELETE r" in query and "COMPLEMENTS|RELATED_TO" in query for query in queries))
+        self.assertTrue(any("MERGE (a)-[:RELATED_TO {reason: $reason}]->(b)" in query for query in queries))
+        self.assertTrue(any("NOT ()-->(n)" in query for query in queries))
+
+    def test_retry_window_allows_recovery_reconcile_without_restart(self):
+        module = load_neo4j_kb()
+        session = RecordingSession()
+        kb = module.Neo4jKnowledgeBase()
+        kb._driver = FakeDriver(session)
+        kb._available = False
+        kb._last_failure_at = 100
+        kb.retry_interval_seconds = 30
+        calls = []
+        kb.reconcile_from_json = lambda: calls.append("reconciled") or True
+
+        with patch.object(module.time, "monotonic", return_value=131):
+            self.assertTrue(kb._ensure_synced())
+
+        self.assertEqual(calls, ["reconciled"])
+
+    def test_summary_query_reconciles_before_reading_graph(self):
+        module = load_neo4j_kb()
+        session = RecordingSession()
+        kb = module.Neo4jKnowledgeBase()
+        kb._driver = FakeDriver(session)
+        kb._available = True
+        calls = []
+        kb.reconcile_from_json = lambda: calls.append("reconciled") or True
+
+        self.assertEqual(kb.get_all_styles_summary(), [])
+
+        self.assertEqual(calls, ["reconciled"])
 
 
 if __name__ == "__main__":

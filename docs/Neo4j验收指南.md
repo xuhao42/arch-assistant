@@ -18,20 +18,23 @@
 
 ```powershell
 # 幂等写入（不清空已有图）
-python init_neo4j.py
+.venv-win\Scripts\python.exe init_neo4j.py
 
 # 全量重建（清空后重建）
-python init_neo4j.py --reset
+.venv-win\Scripts\python.exe init_neo4j.py --reset
 
 # 仅验证图谱核心节点/关系是否存在
-python init_neo4j.py --verify-only
+.venv-win\Scripts\python.exe init_neo4j.py --verify-only
 ```
 
 预期效果：
 
 - 能创建/更新 `ArchitectureStyle`、`Characteristic`、`UseCase`、`Keyword` 节点。
 - 能创建核心关系：`HAS_PRO`、`HAS_CON`、`SUITABLE_FOR`、`HAS_KEYWORD`。
-- `--verify-only` 会同时检查核心节点和核心关系，任一缺失都会返回失败。
+- `data/architecture_styles.json` 是唯一架构风格数据源；初始化脚本会同步 21 条 JSON 记录，并删除图谱中不再存在的旧风格。
+- 关键词按每条 JSON 的“别名 + 适用场景 + 关键技术”保序去重生成。当前基线为 270 条 `HAS_KEYWORD` 关系、267 个关键词节点。
+- 架构间关系独立保存在 `data/architecture_relations.json`。
+- `--verify-only` 会检查架构风格数量与 JSON 完全一致，并确认核心节点和关系非空。
 - 控制台会输出统计信息（节点数、关系数）用于验收记录。
 
 ---
@@ -133,7 +136,9 @@ RETURN s.name, collect(DISTINCT p.name) AS pros, collect(DISTINCT c.name) AS con
 1. `Neo4jKnowledgeBase.is_available()` 先检测 Neo4j 是否可连接。
 2. 如果连接失败、认证失败或后续查询失败，记录不可用原因，返回不可用状态。
 3. 上层 `build_knowledge_summary()` 自动回退到 `data/architecture_styles.json`。
-4. 架构推荐主流程继续执行，不因为 Neo4j 不可用而中断。
+4. `POST /api/v1/knowledge` 先原子写入 JSON，再尝试同步 Neo4j。图谱不可用时接口仍返回成功，并标记 `neo4j_synced=false`、`fallback=true`。
+5. Neo4j 恢复后，后续请求按冷却窗口重新探测，并从 JSON 触发全量对账。
+6. 架构推荐主流程继续执行，不因为 Neo4j 不可用而中断。
 
 答辩可用一句话：
 
