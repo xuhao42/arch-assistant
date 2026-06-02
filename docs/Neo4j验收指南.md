@@ -143,3 +143,19 @@ RETURN s.name, collect(DISTINCT p.name) AS pros, collect(DISTINCT c.name) AS con
 答辩可用一句话：
 
 > Neo4j 作为图谱增强层，提升可查询性与可解释性；当 Neo4j 不可用时，系统自动回退 JSON 知识库，保证推荐主流程稳定可运行。
+
+---
+
+## 6. 2026-06-02 一致性更新说明
+
+本次更新将 JSON 与 Neo4j 的职责明确拆分：
+
+| 层级 | 职责 |
+|---|---|
+| `data/architecture_styles.json` | 21 种架构风格的唯一权威数据源 |
+| `data/architecture_relations.json` | 架构间 `COMPLEMENTS`、`RELATED_TO` 关系定义 |
+| `architecture_styles.py` | JSON 读取、归一化、摘要生成和原子追加写入 |
+| `neo4j_kb.py` | Neo4j 投影、全量对账、失败回退和冷却窗口重试 |
+| `init_neo4j.py` | 手动初始化、全量重建和只读验证入口 |
+
+新增知识时，接口先写入 JSON，再尝试同步 Neo4j。即使 Neo4j 暂时不可用，新增知识仍然保存在权威数据源中；Neo4j 恢复后，下一次读取会从 JSON 自动执行全量对账。
