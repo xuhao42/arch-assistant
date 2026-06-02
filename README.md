@@ -188,9 +188,19 @@ curl.exe -N -X POST http://127.0.0.1:3000/api/v1/analyze/stream ^
 4. 展示决策溯源、相似案例参考与组合推荐。
 5. 评估报告以打字机效果逐步呈现。
 
+## 2026-06-02 知识库一致性更新
+
+- 将 `data/architecture_styles.json` 固定为架构风格的唯一权威数据源，避免 JSON fallback 与 Neo4j 图谱分别维护后产生漂移。
+- 新增 `apps/agent-runtime/agent_runtime/architecture_styles.py`，统一负责 JSON 读取、归一化、摘要生成和原子追加写入。
+- Neo4j 恢复可用后会自动从 JSON 执行全量对账：同步 21 种架构风格、重建受管关系、删除陈旧风格和孤立节点，并同步 `data/architecture_relations.json` 中的架构间关系。
+- `POST /api/v1/knowledge` 采用 JSON 优先写入策略。Neo4j 临时不可用时仍保留新增知识，并返回 `neo4j_synced=false`、`fallback=true`；恢复后自动补齐图谱。
+- Docker Compose 已挂载可写 `./data:/data`，并通过 `NEO4J_DOCKER_URI` 支持容器访问宿主机 Neo4j。
+
 ## 已知说明
 
-- Neo4j 为可选增强项。当前系统优先尝试 Neo4j，连接不可用时自动回退到 JSON 知识库。`init_neo4j.py` 可初始化架构风格、优缺点、适用场景、关键词和架构互补关系。
+- `data/architecture_styles.json` 是 21 种架构风格的唯一数据源。`.venv-win\Scripts\python.exe init_neo4j.py` 会将 JSON 归一化为 Neo4j 节点与关系；架构间关系独立保存在 `data/architecture_relations.json`。
+- Neo4j 为可选增强项。连接不可用时系统自动回退 JSON；`POST /api/v1/knowledge` 仍会保存 JSON 并返回 `fallback=true`。Neo4j 恢复后，后续请求会触发全量对账。
+- 本地脚本使用 `NEO4J_URI`；Docker Compose 默认使用 `NEO4J_DOCKER_URI=bolt://host.docker.internal:7687` 访问宿主机 Neo4j。
 - 项目已包含 CodeGraph 配置，`.codex/config.toml` 绑定当前仓库，便于用 `codegraph_*` 工具快速定位符号、调用关系和文件结构。
 - 语音输入依赖浏览器 Web Speech API，推荐使用 Chrome 或 Edge，并通过 `localhost` 访问。
 - `data/learned_cases.json` 是运行时学习数据，会随演示增长；当前仓库保留了已学习案例，用于展示相似案例命中和 Few-shot 上下文注入。

@@ -20,9 +20,9 @@ from langgraph.graph.message import add_messages
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from loguru import logger
+from .architecture_styles import format_style_summary, load_normalized_styles, load_styles
 from .neo4j_kb import Neo4jKnowledgeBase  # Neo4j 图数据库查询
 
-KNOWLEDGE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "architecture_styles.json")
 ENV_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env")
 
 def _read_env_value(key: str) -> str:
@@ -74,18 +74,35 @@ class AgentState(TypedDict):
 # ── LLM ────────────────────────────────────────────
 _llm: ChatOpenAI | None = None
 
+def resolve_llm_config() -> dict[str, str]:
+    """Resolve one provider's credentials and defaults without mixing providers."""
+    deepseek_api_key = _read_env_value("DEEPSEEK_API_KEY")
+    if deepseek_api_key:
+        return {
+            "api_key": deepseek_api_key,
+            "base_url": _read_env_value("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1",
+            "model": _read_env_value("DEEPSEEK_MODEL") or "deepseek-chat",
+        }
+
+    openai_api_key = _read_env_value("OPENAI_API_KEY")
+    if openai_api_key:
+        return {
+            "api_key": openai_api_key,
+            "base_url": _read_env_value("OPENAI_BASE_URL") or "https://api.openai.com/v1",
+            "model": _read_env_value("OPENAI_MODEL") or "gpt-4o-mini",
+        }
+
+    raise ValueError("Missing API key: set DEEPSEEK_API_KEY or OPENAI_API_KEY in .env")
+
 def get_llm() -> ChatOpenAI:
     global _llm
     if _llm is not None:
         return _llm
-    api_key = _read_env_value("DEEPSEEK_API_KEY") or _read_env_value("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("Missing API key: set DEEPSEEK_API_KEY or OPENAI_API_KEY in .env")
+    config = resolve_llm_config()
     _llm = ChatOpenAI(
-        model=_read_env_value("DEEPSEEK_MODEL") or "deepseek-chat",
-        api_key=api_key,
-        openai_api_key=api_key,
-        base_url=_read_env_value("DEEPSEEK_BASE_URL") or _read_env_value("OPENAI_BASE_URL") or "https://api.deepseek.com/v1",
+        model=config["model"],
+        api_key=config["api_key"],
+        base_url=config["base_url"],
         temperature=0.3,
         max_tokens=2048,
     )
@@ -93,9 +110,8 @@ def get_llm() -> ChatOpenAI:
 
 # ── Knowledge Base ─────────────────────────────────
 def load_knowledge() -> list[dict]:
-    # JSON 知识库是兜底数据源：即使图数据库不可用，主流程仍能给出可解释的推荐。
-    with open(KNOWLEDGE_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    # JSON is authoritative even when Neo4j is available.
+    return load_styles()
 
 def build_knowledge_summary() -> str:
     """构建增强的知识摘要。优先 Neo4j 图查询，失败后回退 JSON。"""
@@ -133,72 +149,7 @@ def build_knowledge_summary() -> str:
         logger.info("📄 Neo4j 不可用，使用 JSON 知识库。原因: {}", reason)
     else:
         logger.info("📄 Neo4j 不可用，使用 JSON 知识库")
-    styles = load_knowledge()
-    lines = []
-    for s in styles:
-        name = s['name']
-        category = s.get('category', '')
-        desc = s.get('description', '')
-        
-        # 构建强信号（触发该架构的关键词）
-        signals = {
-            "分层架构 (Layered Architecture)": "分层/三层/n-tier/单体/简单业务/小团队",
-            "微服务架构 (Microservices Architecture)": "微服务/独立部署/多团队/技术栈多样性/持续交付",
-            "事件驱动架构 (Event-Driven Architecture)": "事件/消息/异步/实时/Kafka/削峰/解耦",
-            "CQRS (命令查询职责分离)": "读写分离/CQRS/命令查询/读写负载差异/事件溯源/复杂查询报表/版本历史/冲突解决/Feed/推送/同步/审计/银行/交易/转账/一致性/事务",
-            "管道-过滤器架构 (Pipe-Filter Architecture)": "管道/流水线/pipeline/过滤器/ETL/数据流/编译器/音视频处理/日志处理/数据转换",
-            "SOA (面向服务架构)": "SOA/ESB/企业集成/遗留系统/异构系统/企业服务总线/WebService",
-            "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)": "六边形/端口适配器/DDD/可测试性/核心业务/依赖反转/替换外部/防腐层/外部系统对接/流程引擎/保险/理赔/审计追溯",
-            "MVC架构 (Model-View-Controller)": "MVC/Web应用/博客/CMS/单体/快速开发/个人项目",
-            "Space-Based架构 (基于空间的架构)": "高频交易/秒杀/极低延迟/空间架构/内存网格/实时竞价/游戏服务器",
-            "对等架构 (Peer-to-Peer Architecture)": "P2P/去中心化/点对点/区块链/文件共享/无中心/BitTorrent/IPFS/节点对等/CDN/内容分发/边缘节点/就近/全球部署/智能缓存",
-            "Serverless架构": "Serverless/无服务器/函数计算/FaaS/Lambda/按需/定时/凌晨/报表/日报/无需运维/突发/事件触发/拉取数据",
-            "插件架构/微内核 (Plugin/Microkernel Architecture)": "插件/模块化/IDE/可扩展平台/微内核/OSGi/SPI/第三方扩展/产品化/API网关/路由/中间件/限流/认证/拦截器/协议转换",
-            "批处理架构 (Batch Processing Architecture)": "批处理/batch/离线/日终/清算/对账/监管报表/批量作业/可重跑/检查点/高吞吐",
-            "主程序-子过程架构 (Main Program-Subroutine Architecture)": "主程序/子过程/main subroutine/过程式/命令行工具/固定流程/本地工具/简单稳定",
-            "面向对象架构 (Object-Oriented Architecture)": "面向对象/object oriented/OO/类/对象/封装/继承/多态/图形对象/撤销重做/领域对象",
-            "仓库架构 (Repository Architecture)": "仓库/repository/共享数据/统一知识库/中央数据存储/多工具集成/元数据/主数据",
-            "黑板架构 (Blackboard Architecture)": "黑板/blackboard/共享工作区/知识源/多模型/增量推理/协同诊断/共享状态",
-            "解释器架构 (Interpreter Architecture)": "解释器/interpreter/DSL/脚本/运行时解析/脚本引擎/模板/字节码/虚拟机",
-            "规则系统架构 (Rule-Based System Architecture)": "规则系统/rule based/规则引擎/推理机/事实库/规则库/审批/风控/可解释决策",
-            "进程通信架构 (Communicating Processes Architecture)": "进程通信/communicating processes/IPC/多进程/Socket/RPC/消息通道/调度进程/工作进程",
-            "多Agent架构 (Multi-Agent Architecture)": "多Agent/multi-agent/智能体协作/规划Agent/检索Agent/评审Agent/协调Agent/共享记忆/任务分解",
-        }
-        
-        anti_signals = {
-            "分层架构 (Layered Architecture)": "微服务/分布式/高并发/独立部署",
-            "微服务架构 (Microservices Architecture)": "小项目/个人/简单/单体/快速原型/低成本",
-            "事件驱动架构 (Event-Driven Architecture)": "简单CRUD/强一致性事务/同步请求响应",
-            "CQRS (命令查询职责分离)": "简单CRUD/业务逻辑极少/无查询需求",
-            "管道-过滤器架构 (Pipe-Filter Architecture)": "交互式/请求响应/Web应用/电商",
-            "SOA (面向服务架构)": "新系统/敏捷/微服务/初创/快速迭代",
-            "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)": "简单CRUD/快速原型/DDD不熟悉",
-            "MVC架构 (Model-View-Controller)": "分布式/微服务/高并发/独立部署/多团队",
-            "Space-Based架构 (基于空间的架构)": "小规模/简单/低并发/运维能力弱/团队小",
-            "对等架构 (Peer-to-Peer Architecture)": "中央控制/强一致性/合规监管/事务",
-            "Serverless架构": "长时间运行/有状态/精细控制/延迟敏感实时系统",
-            "插件架构/微内核 (Plugin/Microkernel Architecture)": "简单应用/不需扩展/实时系统/一次性项目",
-            "批处理架构 (Batch Processing Architecture)": "实时交互/毫秒级响应/同步请求响应/人工频繁干预",
-            "主程序-子过程架构 (Main Program-Subroutine Architecture)": "大型分布式/多团队/频繁扩展/复杂领域模型",
-            "面向对象架构 (Object-Oriented Architecture)": "纯数据流水线/极简脚本/无状态批处理",
-            "仓库架构 (Repository Architecture)": "去中心化/点对点/低延迟直连/写冲突极高",
-            "黑板架构 (Blackboard Architecture)": "简单CRUD/严格线性流程/高吞吐交易",
-            "解释器架构 (Interpreter Architecture)": "极致性能/规则很少/无需运行时配置",
-            "规则系统架构 (Rule-Based System Architecture)": "规则很少/深度算法推理/高频低延迟核心交易",
-            "进程通信架构 (Communicating Processes Architecture)": "极小单体工具/无需隔离/强共享内存",
-            "多Agent架构 (Multi-Agent Architecture)": "确定性简单流程/极低延迟交易/缺少评估监控",
-        }
-        
-        sig = signals.get(name, "")
-        anti = anti_signals.get(name, "")
-        
-        lines.append(
-            f"- {name} [{category}] | {desc[:60]}... | "
-            f"触发词: {sig} | "
-            f"排除词: {anti} | "
-            f"可扩展: {s['scalability']} | 复杂度: {s['complexity']}"
-        )
-    return "\n".join(lines)
+    return "\n".join(format_style_summary(style) for style in load_normalized_styles())
 
 # ── Step 1: Requirement Analysis Agent ─────────────
 REQUIREMENT_ANALYSIS_PROMPT = """你是一个软件架构需求分析师。从用户描述中提取架构关键特征。

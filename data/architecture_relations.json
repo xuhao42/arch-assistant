@@ -1,0 +1,26 @@
+[
+  {
+    "from": "事件驱动架构 (Event-Driven Architecture)",
+    "type": "COMPLEMENTS",
+    "to": "CQRS (命令查询职责分离)",
+    "reason": "事件驱动为CQRS提供异步事件流转，CQRS为事件驱动提供读写优化"
+  },
+  {
+    "from": "微服务架构 (Microservices Architecture)",
+    "type": "COMPLEMENTS",
+    "to": "事件驱动架构 (Event-Driven Architecture)",
+    "reason": "事件驱动实现微服务间异步解耦通信"
+  },
+  {
+    "from": "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)",
+    "type": "COMPLEMENTS",
+    "to": "CQRS (命令查询职责分离)",
+    "reason": "六边形的端口抽象天然适配CQRS的读写分离模型"
+  },
+  {
+    "from": "插件架构/微内核 (Plugin/Microkernel Architecture)",
+    "type": "RELATED_TO",
+    "to": "微服务架构 (Microservices Architecture)",
+    "reason": "API网关场景下，插件架构处理路由中间件，微服务处理业务逻辑"
+  }
+]

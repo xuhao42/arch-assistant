@@ -7,7 +7,11 @@ from loguru import logger
 from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(__file__))
-from .graph import agent_graph, AgentState
+from .architecture_styles import (
+    DuplicateArchitectureStyleError,
+    append_style_atomic,
+)
+from .graph import agent_graph, AgentState, get_neo4j_kb
 
 # ── Models ─────────────────────────────────────────
 class RunTaskRequest(BaseModel):
@@ -281,22 +285,24 @@ async def list_knowledge():
 @app.post("/api/v1/knowledge")
 async def add_knowledge(entry: KnowledgeEntry):
     """添加新架构风格到知识库"""
-    import json
-    from .graph import KNOWLEDGE_PATH
-    with open(KNOWLEDGE_PATH, "r", encoding="utf-8") as f:
-        styles = json.load(f)
-    
-    # Check duplicate
-    for s in styles:
-        if s["name"] == entry.name:
-            raise HTTPException(status_code=409, detail=f"架构 '{entry.name}' 已存在")
-    
-    styles.append(entry.model_dump())
-    with open(KNOWLEDGE_PATH, "w", encoding="utf-8") as f:
-        json.dump(styles, f, ensure_ascii=False, indent=2)
-    
+    style = entry.model_dump()
+    try:
+        styles = append_style_atomic(style)
+    except DuplicateArchitectureStyleError:
+        raise HTTPException(status_code=409, detail=f"架构 '{entry.name}' 已存在")
+    try:
+        neo4j_synced = get_neo4j_kb().upsert_style(style)
+    except Exception as error:
+        neo4j_synced = False
+        logger.warning("Neo4j 新增同步失败，已保留 JSON 写入: {}", error)
     logger.info(f"📚 知识进化: 新增架构风格 '{entry.name}'")
-    return {"status": "added", "name": entry.name, "total": len(styles)}
+    return {
+        "status": "added",
+        "name": entry.name,
+        "total": len(styles),
+        "neo4j_synced": neo4j_synced,
+        "fallback": not neo4j_synced,
+    }
 
 # ── Case Library ─────────────────────────────
 @app.get("/api/v1/cases")
