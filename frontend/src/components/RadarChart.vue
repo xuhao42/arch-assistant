@@ -5,6 +5,8 @@ import type { Candidate } from './CandidateCards.vue'
 const props = defineProps<{ candidates: Candidate[] }>()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
+// 组件接收 CandidateCards 使用的候选架构数据，并将其压缩为课程验收场景下
+// 更容易横向比较的质量属性视图；这里的维度顺序需要和 profileMap 分值一一对应。
 const dimensions = [
   { key: 'scalability', label: '扩展性' },
   { key: 'performance', label: '性能' },
@@ -14,6 +16,8 @@ const dimensions = [
   { key: 'testability', label: '可测试性' },
 ]
 
+// 质量画像不是用户评分，而是面向架构推荐解释的经验权重。
+// 分值保持在 1-5，便于在雷达图中与网格层级直接对应。
 const profileMap: Record<string, number[]> = {
   layered: [2, 3, 2, 5, 2, 3],
   microservices: [5, 3, 5, 2, 5, 4],
@@ -29,6 +33,17 @@ const profileMap: Record<string, number[]> = {
   plugin: [3, 3, 5, 3, 4, 5],
 }
 
+/**
+ * 将候选架构名称归一到内置画像键。
+ *
+ * 后端可能返回英文、中文或混合名称；前端使用关键词兜底匹配，
+ * 避免因为展示名称差异导致雷达图无法绘制。
+ *
+ * Args:
+ *   name: 后端返回的候选架构展示名称。
+ * Returns:
+ *   profileMap 中可用于读取质量画像的架构键。
+ */
 function archKey(name: string) {
   const n = name.toLowerCase()
   if (n.includes('microservice') || n.includes('微服务')) return 'microservices'
@@ -45,6 +60,16 @@ function archKey(name: string) {
   return 'layered'
 }
 
+/**
+ * 获取候选架构的质量属性分值。
+ *
+ * 未识别的架构统一回退到分层架构画像，保证短输入或新架构名称不会让图表空白。
+ *
+ * Args:
+ *   candidate: 后端召回并传入前端展示的候选架构。
+ * Returns:
+ *   与 dimensions 顺序一致的 1-5 分质量属性数组。
+ */
 function scoresFor(candidate: Candidate) {
   return profileMap[archKey(candidate.name)] ?? profileMap.layered
 }
@@ -52,6 +77,12 @@ function scoresFor(candidate: Candidate) {
 const lineColors = ['#22d3ee', '#a78bfa', '#f59e0b']
 const fillColors = ['rgba(34, 211, 238, .16)', 'rgba(167, 139, 250, .12)', 'rgba(245, 158, 11, .10)']
 
+/**
+ * 根据当前候选架构和容器尺寸重绘雷达图。
+ *
+ * Canvas 不会自动响应 CSS 尺寸与设备像素比变化，因此每次候选结果更新或窗口尺寸变化时
+ * 都重新同步画布真实像素，避免高分屏模糊或布局调整后图形错位。
+ */
 function draw() {
   const canvas = canvasRef.value
   if (!canvas || !props.candidates.length) return
@@ -75,6 +106,7 @@ function draw() {
 
   ctx.clearRect(0, 0, width, height)
 
+  // 网格层级固定为 5 层，与质量画像的 1-5 分制保持一致，降低用户理解成本。
   for (let level = 1; level <= levels; level++) {
     ctx.beginPath()
     dimensions.forEach((_, index) => {
@@ -90,6 +122,7 @@ function draw() {
     ctx.stroke()
   }
 
+  // 轴线和标签跟随维度配置生成，确保后续调整质量维度时不会遗漏可视化结构。
   dimensions.forEach((dimension, index) => {
     const angle = (Math.PI * 2 * index) / dimensions.length - Math.PI / 2
     ctx.beginPath()
@@ -105,6 +138,7 @@ function draw() {
     ctx.fillText(dimension.label, cx + labelRadius * Math.cos(angle), cy + labelRadius * Math.sin(angle) + 4)
   })
 
+  // 后绘制排名更靠前的候选，避免 Top 1 被后续候选的大面积填充遮挡。
   for (let candidateIndex = count - 1; candidateIndex >= 0; candidateIndex--) {
     const scores = scoresFor(props.candidates[candidateIndex])
     ctx.beginPath()
@@ -130,6 +164,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => window.removeEventListener('resize', draw))
+// candidates 可能由 SSE 分阶段补全或更新，深度监听可以让图表随推荐结果同步刷新。
 watch(() => props.candidates, () => nextTick(draw), { deep: true })
 </script>
 

@@ -1,17 +1,14 @@
-"""Agent Runtime - 基于 LangGraph 的三 Agent 协作系统
+"""Agent Runtime 的多 Agent 编排图。
 
-三个 Agent 的分工：
-- RequirementAnalysisAgent: 需求解析 - 从自然语言中提取架构关键特征
-- ArchitectureMatchingAgent: 架构匹配 - 将特征与知识库中的架构风格匹配
-- EvaluationAgent: 评估生成 - 多维度对比分析，生成推荐报告
+本模块负责把用户自然语言架构需求编排为完整推荐流程：先抽取结构化特征，
+再结合 Neo4j/JSON 知识库召回候选架构，随后通过规则引擎校正排序并生成
+评估报告和前端拓扑模型。LangGraph 用于把需求解析、架构匹配和评估生成
+拆成可流式观察的阶段，便于 FastAPI 入口按阶段返回结果。
 
-知识库支持: Neo4j 图数据库 (优先) + JSON 文件 (fallback)
+关键下游依赖包括 ChatOpenAI 兼容模型、Neo4j 知识图谱和本地 JSON 架构
+风格库。Neo4j 属于增强能力，模型或图数据库不可用时会启用降级逻辑，
+保证课程演示和本地开发环境仍能返回可解释结果。
 """
-# 这一层是项目的“核心智能决策层”，负责把自然语言需求转成结构化特征，再做规则校验和最终推荐。
-# 这里之所以用 LangGraph，是为了把三个职责拆成清晰的节点，便于调试、流式输出和后续扩展。
-# Neo4j 只是知识增强层，不可用时会自动回退到 JSON，保证主流程稳定。
-# 也就是说，这里是“LLM + 规则引擎 + 知识库”共同工作的核心地方。
-# 下面这些注释会重点说明：为什么要补规则、为什么要降权、为什么要 fallback。
 import json, re, os
 from datetime import date
 from typing import TypedDict, Annotated, Literal
@@ -26,6 +23,15 @@ from .neo4j_kb import Neo4jKnowledgeBase  # Neo4j 图数据库查询
 ENV_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env")
 
 def _read_env_value(key: str) -> str:
+    """读取模型配置值，优先使用进程环境变量并兼容仓库根目录 `.env`。
+
+    Args:
+        key: 需要解析的环境变量名称。
+
+    Returns:
+        去除引号和空白后的配置值；未配置或读取失败时返回空字符串。
+    """
+
     val = os.getenv(key, "").strip()
     if val:
         return val
@@ -48,6 +54,13 @@ def _read_env_value(key: str) -> str:
 _neo4j_kb: Neo4jKnowledgeBase | None = None
 
 def get_neo4j_kb() -> Neo4jKnowledgeBase:
+    """获取 Neo4j 知识库封装实例。
+
+    Returns:
+        全局复用的 Neo4jKnowledgeBase。实例内部负责判断连接是否可用；
+        调用方应在不可用时回退到 JSON 知识库，而不是中断推荐主流程。
+    """
+
     global _neo4j_kb
     # 用单例缓存 Neo4j 封装，避免每次请求都重复初始化驱动，减少连接开销和启动抖动。
     # 这里不直接抛异常，而是让上层在可用时增强、不可用时 fallback 到 JSON 知识库。
@@ -75,7 +88,18 @@ class AgentState(TypedDict):
 _llm: ChatOpenAI | None = None
 
 def resolve_llm_config() -> dict[str, str]:
-    """Resolve one provider's credentials and defaults without mixing providers."""
+    """解析当前可用的 LLM 服务商配置。
+
+    这里按 DeepSeek 优先、OpenAI 其次的顺序选择单一服务商，避免 API Key、
+    base_url 和模型名跨服务商混用导致难以排查的鉴权或模型不存在错误。
+
+    Returns:
+        包含 api_key、base_url 和 model 的 ChatOpenAI 兼容配置。
+
+    Raises:
+        ValueError: 未配置任何支持的模型 API Key。
+    """
+
     deepseek_api_key = _read_env_value("DEEPSEEK_API_KEY")
     if deepseek_api_key:
         return {
@@ -95,6 +119,13 @@ def resolve_llm_config() -> dict[str, str]:
     raise ValueError("Missing API key: set DEEPSEEK_API_KEY or OPENAI_API_KEY in .env")
 
 def get_llm() -> ChatOpenAI:
+    """获取全局 LLM 客户端。
+
+    Returns:
+        复用的 ChatOpenAI 兼容客户端。客户端使用较低 temperature，减少架构
+        推荐报告在相同输入下的波动，便于规则引擎和课程验收用例复现。
+    """
+
     global _llm
     if _llm is not None:
         return _llm
@@ -110,14 +141,26 @@ def get_llm() -> ChatOpenAI:
 
 # ── Knowledge Base ─────────────────────────────────
 def load_knowledge() -> list[dict]:
-    # JSON is authoritative even when Neo4j is available.
+    """加载权威架构风格定义。
+
+    Returns:
+        本地 JSON 中维护的架构风格列表。即使 Neo4j 可用，规则引擎仍以
+        JSON 为准，避免图数据库增量数据影响课程固定规则的可复现性。
+    """
+
     return load_styles()
 
 def build_knowledge_summary() -> str:
-    """构建增强的知识摘要。优先 Neo4j 图查询，失败后回退 JSON。"""
+    """构建供架构匹配 Agent 使用的知识摘要。
+
+    Returns:
+        架构风格、触发词、排除词和优缺点的文本摘要。Neo4j 可用时使用图谱
+        摘要增强 LLM 上下文；不可用时回退到 JSON 摘要以保证主流程可用。
+    """
+
     kb = get_neo4j_kb()
     if kb.is_available():
-        # 使用 Neo4j 图数据库上下文
+        # 图谱摘要用于把可维护的结构化知识注入提示词，减少模型只依赖预训练记忆。
         neo4j_summary = kb.get_all_styles_summary()
         if neo4j_summary:
             lines = []
@@ -143,7 +186,7 @@ def build_knowledge_summary() -> str:
                 logger.info("📊 使用 Neo4j 知识图谱 ({} 种架构)", len(lines))
             return "\n".join(lines)
 
-    # Fallback: JSON 知识库
+    # JSON fallback 是本地开发和演示环境的稳定兜底，Neo4j 故障不应阻断推荐链路。
     reason = kb.unavailable_reason if hasattr(kb, "unavailable_reason") else ""
     if reason:
         logger.info("📄 Neo4j 不可用，使用 JSON 知识库。原因: {}", reason)
@@ -176,6 +219,16 @@ REQUIREMENT_ANALYSIS_PROMPT = """你是一个软件架构需求分析师。从�
 """
 
 async def requirement_analysis(state: AgentState) -> AgentState:
+    """从用户需求中抽取后续推荐所需的结构化特征。
+
+    Args:
+        state: LangGraph 共享状态，至少包含 user_requirement。
+
+    Returns:
+        写入 extracted_features 和 current_stage 的共享状态。模型不可用时会基于
+        关键词给出保守默认值，避免后续匹配阶段拿不到基础约束。
+    """
+
     # 第一个 Agent 先把自由文本压缩成结构化特征，后续匹配和规则引擎才能基于统一字段继续处理。
     # 之所以先做结构化抽取，是因为后面的候选排序和规则校验都依赖统一字段，而不是原始自然语言。
     logger.info("🔍 [需求解析Agent] 开始分析需求...")
@@ -252,6 +305,20 @@ ARCHITECTURE_MATCHING_PROMPT = """你是一个软件架构匹配专家。根据�
 }}"""
 
 async def architecture_matching(state: AgentState) -> AgentState:
+    """召回与用户需求最匹配的候选架构风格。
+
+    该阶段把结构化特征、知识库摘要、Neo4j 相关上下文和历史案例 Few-shot
+    一并注入 LLM。LLM 负责广泛召回候选，后续 evaluation 阶段再通过规则
+    引擎校正强触发、降权和排序。
+
+    Args:
+        state: 已包含 extracted_features、user_requirement 和可选 case_context 的共享状态。
+
+    Returns:
+        写入 candidate_styles 和 current_stage 的共享状态。模型异常时返回
+        少量保守候选，保证评估阶段仍能执行。
+    """
+
     # 第二个 Agent 负责“初筛候选”，先让 LLM 结合知识库给出候选，再交给规则引擎做二次校验。
     # 这样做的原因是 LLM 负责广泛召回，规则引擎负责把课程场景中的硬约束拉回来。
     logger.info("🎯 [架构匹配Agent] 开始匹配...")
@@ -270,7 +337,7 @@ async def architecture_matching(state: AgentState) -> AgentState:
         neo4j_context = kb.query_architecture_context(features.get("features", []))
         if neo4j_context:
             prompt += "\n\n" + neo4j_context
-    # 注入知识进化：历史案例作为Few-shot参考
+    # 历史案例只作为 Few-shot 参考注入，不直接覆盖候选结果，避免旧案例误伤新需求。
     case_context = state.get("case_context", "")
     if case_context:
         prompt += case_context
@@ -324,25 +391,25 @@ def rule_engine_validate(candidates: list[dict], features: dict, requirement: st
     
     full_kb = {s["name"]: s for s in load_knowledge()}
     
-    # ── 正向加分规则：需求关键词触发小众架构加分 ──
+    # ── 正向加分规则：课程经典风格常被通用模型低估，需要用明确关键词拉回排序。 ──
     promotion_rules = [
-        # 管道-过滤器触发词
+        # 线性数据处理链路通常比微服务更贴合，尤其是 ETL、编译器和媒体处理场景。
         (["管道-过滤器"], ["管道", "pipeline", "流水线", "过滤器", "ETL", "数据流", "编译器", "音视频", "转码", "日志处理", "数据清洗", "数据转换", "数据聚合", "拉取数据"], 0.25),
-        # 对等架构触发词（加强权重）
+        # 去中心化、内容分发和边缘缓存的核心约束是节点自治，不应被异步事件模型替代。
         (["对等架构"], ["P2P", "去中心化", "点对点", "区块链", "文件共享", "无中心", "BitTorrent", "IPFS", "节点对等", "无服务器节点", "CDN", "内容分发", "边缘节点", "就近", "全球部署", "缓存", "智能缓存"], 0.35),
-        # Space-Based触发词
+        # Space-Based 只适合极端低延迟和内存网格场景，普通高并发不应随意触发。
         (["Space-Based"], ["秒杀", "高频交易", "极低延迟", "内存网格", "实时竞价", "游戏服务器", "毫秒级", "空间架构"], 0.30),
-        # Serverless触发词（定时任务场景大幅加分）
+        # 定时、突发和函数级任务是 Serverless 的优势，常驻有状态服务则不适合。
         (["Serverless"], ["Serverless", "无服务器", "函数计算", "FaaS", "Lambda", "按需付费", "定时", "cron", "调度", "凌晨", "日报", "周报", "无需运维", "突发流量", "事件触发", "Webhook"], 0.35),
-        # 插件架构触发词（加强权重）
+        # 可插拔扩展点或网关中间件链强调扩展协议，不能简单归为微服务拆分问题。
         (["插件"], ["插件", "IDE", "可扩展平台", "微内核", "OSGi", "SPI", "第三方扩展", "产品化", "模块化平台", "多租户SaaS", "API网关", "路由转发", "可插拔", "拦截器", "中间件链", "协议转换", "限流", "认证鉴权", "日志监控"], 0.30),
-        # SOA触发词
+        # 企业集成和遗留系统对契约治理更敏感，SOA 在这类场景比微服务更可解释。
         (["SOA"], ["SOA", "ESB", "企业集成", "遗留系统", "异构系统", "企业服务总线", "WebService", "SOAP", "电子政务", "跨部门", "统一办事"], 0.30),
-        # CQRS触发词（加大权重）
+        # 强审计、读写负载差异和事件溯源是 CQRS 的核心信号，因此权重高于通用异步事件。
         (["CQRS"], ["CQRS", "读写分离", "事件溯源", "命令查询", "读写负载差异", "复杂查询", "报表系统", "审计", "银行交易", "银行核心", "银行", "转账", "存款", "贷款", "一致性", "事务", "版本历史", "Feed流", "聚合推送", "动态推送", "冲突解决", "文件同步", "离线编辑"], 0.35),
-        # 六边形触发词（加强权重）
+        # 六边形架构用于保护复杂领域核心，外部系统多且变化快时优先级应提高。
         (["六边形"], ["六边形", "端口适配器", "DDD", "领域驱动", "防腐层", "依赖反转", "可测试性优先", "核心业务复杂", "保险", "理赔", "对接外部", "审计追溯", "对接多个外部", "报案", "查勘", "定损", "理算", "支付全流程"], 0.30),
-        # 课程经典风格触发词
+        # 下面这些是课程体系结构分类中的经典风格，关键词命中时要避免被现代热门架构淹没。
         (["批处理"], ["批处理", "batch", "离线", "日终", "清算", "对账", "监管报表", "批量作业", "可重跑", "检查点"], 0.35),
         (["主程序-子过程"], ["主程序", "子过程", "main subroutine", "命令行工具", "固定流程", "本地工具", "过程式", "简单稳定"], 0.30),
         (["面向对象"], ["面向对象", "object oriented", "OO", "图形对象", "连接线", "属性面板", "撤销重做", "领域对象", "类", "对象"], 0.30),
@@ -354,7 +421,7 @@ def rule_engine_validate(candidates: list[dict], features: dict, requirement: st
         (["多Agent"], ["多Agent", "multi-agent", "智能体", "规划Agent", "检索Agent", "评审Agent", "协调Agent", "共享记忆", "任务分解"], 0.35),
     ]
     
-    # 构建候选名称到架构的映射
+    # 候选名称可能带中英文或括号说明，先与知识库标准名对齐，后续规则才能稳定命中。
     candidate_map = {}
     for c in candidates:
         name = c.get("name", "")
@@ -399,9 +466,8 @@ def rule_engine_validate(candidates: list[dict], features: dict, requirement: st
                 candidate_map[name] = candidates[-1]
                 break
 
-    # Course-reference scenario:
-    # cross-platform IM + massive online users + realtime reliable messages + future video calls
-    # should rank Event-Driven as the core option and Microservices as the backup option.
+    # 课程参考场景中，跨平台 IM 的核心矛盾是实时可靠消息和未来音视频扩展。
+    # 事件驱动负责消息链路解耦，微服务作为扩展备选；没有强交易信号时不应把 CQRS 顶到首位。
     im_realtime_signal = has_any(["即时通讯", "im", "聊天", "消息", "实时", "万人", "在线", "视频通话", "跨平台"])
     cqrs_strong_signal = has_any(["银行", "交易", "转账", "存款", "贷款", "审计", "强一致", "事务", "读写分离", "事件溯源"])
     if im_realtime_signal and not cqrs_strong_signal:
@@ -468,6 +534,7 @@ def rule_engine_validate(candidates: list[dict], features: dict, requirement: st
 
     batch_signal = has_any(["批处理", "batch", "离线", "日终", "清算", "对账", "监管报表", "批量作业", "可重跑"])
     if batch_signal:
+        # 离线批量作业最重要的是可重跑、检查点和调度窗口，优先级应高于在线查询模式。
         batch_candidate = find_candidate("批处理") or find_candidate("Batch")
         if batch_candidate:
             batch_candidate["match_score"] = max(batch_candidate.get("match_score", 0.0), 0.98)
@@ -477,7 +544,7 @@ def rule_engine_validate(candidates: list[dict], features: dict, requirement: st
             cqrs_candidate["match_score"] = min(cqrs_candidate.get("match_score", 0.0), 0.82)
             cqrs_candidate["rule_engine_note"] = "该需求更偏离线批量作业，CQRS作为审计/查询补充候选"
     
-    # ── 负面过滤规则 ──
+    # ── 负面过滤规则：把明显违反非功能约束的候选压低，降低“看起来高级但落地不合适”的风险。 ──
     validated = []
     for c in candidates:
         name = c.get("name", "")
@@ -491,14 +558,14 @@ def rule_engine_validate(candidates: list[dict], features: dict, requirement: st
             validated.append(c)
             continue
         
-        # 规则1: 高并发场景惩罚低可扩展性架构
+        # 高并发场景下，低扩展性风格会放大容量风险，因此即使被 LLM 召回也只能作为低分候选。
         if concurrency in ("高", "极高") and kb.get("scalability") in ("低",):
             logger.warning(f"   规则引擎降权: {name} 不适合高并发场景")
             if not c.get("rule_engine_note"):
                 c["rule_engine_note"] = "不适合高并发场景"
             c["match_score"] = min(c.get("match_score", 0.5), 0.3)
         
-        # 规则2: 简单项目惩罚高复杂度架构
+        # 小团队或快速交付场景需要控制治理成本，高复杂度架构会让实现成本超过收益。
         if constraints.get("complexity_tolerance") == "低" and kb.get("complexity") in ("高", "极高"):
             logger.warning(f"   规则引擎降权: {name} 复杂度过高")
             if not c.get("rule_engine_note"):
@@ -514,6 +581,15 @@ def rule_engine_validate(candidates: list[dict], features: dict, requirement: st
 
 # ── Requirement-aware Topology ─────────────────────
 def _topology_key(arch_name: str) -> str:
+    """把知识库架构名称归一为前端拓扑模板键。
+
+    Args:
+        arch_name: 候选架构名称，可能包含中文名、英文名或括号说明。
+
+    Returns:
+        前端拓扑模板使用的稳定键；无法识别时返回 default。
+    """
+
     name = arch_name.lower()
     if "cqrs" in name:
         return "cqrs"
@@ -548,13 +624,53 @@ def _topology_key(arch_name: str) -> str:
     return "default"
 
 def _node(node_id: str, label: str, node_type: str, hint: str, x: int, y: int) -> dict:
+    """创建前端拓扑节点数据。
+
+    Args:
+        node_id: 节点稳定标识，供边引用。
+        label: 前端展示名称。
+        node_type: 节点业务类型，用于前端选择样式。
+        hint: 节点业务职责提示。
+        x: 拓扑画布横坐标。
+        y: 拓扑画布纵坐标。
+
+    Returns:
+        前端可直接渲染的节点字典。
+    """
+
     return {"id": node_id, "label": label, "type": node_type, "hint": hint, "x": x, "y": y}
 
 def _edge(source: str, target: str, label: str, edge_type: str = "sync") -> dict:
+    """创建前端拓扑边数据。
+
+    Args:
+        source: 起点节点标识。
+        target: 终点节点标识。
+        label: 前端展示的交互语义。
+        edge_type: 边的交互类型，用于区分同步调用、事件、命令或消息。
+
+    Returns:
+        前端可直接渲染的边字典。
+    """
+
     return {"from": source, "to": target, "label": label, "type": edge_type}
 
 def build_requirement_topology(requirement: str, features: dict, candidates: list[dict]) -> dict:
-    """基于需求特征和首选架构生成可视化拓扑模型，前端可直接渲染节点/边。"""
+    """基于需求特征和首选架构生成可视化拓扑模型。
+
+    拓扑图用于解释推荐结果，而不是做真实部署编排。因此这里优先生成稳定、
+    易读的课程级抽象节点，并根据需求关键词调整少量节点名称，使前端能展示
+    与用户输入有关的架构因果关系。
+
+    Args:
+        requirement: 用户原始需求文本，用于识别银行、批处理、视频处理等场景细节。
+        features: 需求解析阶段抽取出的结构化特征。
+        candidates: 已排序的候选架构列表，首个候选决定拓扑主模板。
+
+    Returns:
+        包含标题、架构键、需求摘要、节点和边的拓扑模型。
+    """
+
     top_name = candidates[0].get("name", "通用架构") if candidates else "通用架构"
     key = _topology_key(top_name)
     req = requirement.lower()
@@ -565,6 +681,8 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
     ][:6]
 
     def pipe_labels() -> list[str]:
+        """按需求语义选择管道阶段名称，避免所有管道图都显示成泛化数据处理。"""
+
         if any(word in req for word in ["视频", "转码", "水印", "缩略图", "审核"]):
             return ["视频上传", "转码", "加水印", "生成缩略图", "内容审核", "发布/存储"]
         if any(word in req for word in ["ci/cd", "构建", "测试", "部署"]):
@@ -572,6 +690,7 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
         return ["输入数据", "清洗", "转换", "校验", "聚合", "输出结果"]
 
     if key == "cqrs":
+        # CQRS 图强调写侧权威事实、事件投影和读侧优化，适合解释强一致和审计类推荐。
         transaction_label = "交易命令" if any(w in req for w in ["银行", "转账", "存款", "贷款"]) else "业务命令"
         read_label = "账户/审计查询" if "银行" in req else "查询模型"
         nodes = [
@@ -584,10 +703,12 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
         ]
         edges = [_edge("client", "command", "提交命令", "command"), _edge("command", "write_db", "事务写入", "command"), _edge("write_db", "projection", "发布领域事件", "event"), _edge("projection", "read_db", "更新投影视图", "event"), _edge("client", "query", "读取", "sync"), _edge("query", "read_db", "查询优化视图", "sync")]
     elif key == "pipe":
+        # 管道模板按线性阶段展示处理链路，突出每一步可独立替换和复用的设计意图。
         labels = pipe_labels()
         nodes = [_node(f"step{i}", label, "filter" if i not in (0, len(labels) - 1) else "endpoint", f"需求定制步骤：{label}", 90 + i * 150, 245) for i, label in enumerate(labels)]
         edges = [_edge(f"step{i}", f"step{i+1}", "流转", "stream") for i in range(len(labels) - 1)]
     elif key == "rule_system":
+        # 规则系统需要展示事实、规则和命中记录，便于解释风控/审批类决策可追溯性。
         nodes = [
             _node("facts", "申请事实/输入数据", "store", "收入、征信、负债率等事实", 80, 255),
             _node("rules", "规则库", "store", "地区政策、风控和审批规则", 300, 130),
@@ -597,6 +718,7 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
         ]
         edges = [_edge("facts", "engine", "输入事实"), _edge("rules", "engine", "加载规则"), _edge("engine", "audit", "记录解释", "event"), _edge("engine", "decision", "输出决策")]
     elif key == "multi_agent":
+        # 多 Agent 拓扑突出协调者、专职 Agent 和共享记忆，解释任务拆解与结果汇总关系。
         nodes = [
             _node("user", "用户目标", "actor", f"任务领域：{domain}", 70, 250),
             _node("coordinator", "协调Agent", "agent", "拆解任务并汇总结论", 260, 250),
@@ -607,6 +729,7 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
         ]
         edges = [_edge("user", "coordinator", "提交目标"), _edge("coordinator", "planner", "分派规划", "message"), _edge("coordinator", "researcher", "分派检索", "message"), _edge("coordinator", "reviewer", "分派评审", "message"), _edge("planner", "memory", "写入计划", "event"), _edge("researcher", "memory", "写入证据", "event"), _edge("reviewer", "memory", "写入反馈", "event"), _edge("memory", "coordinator", "汇总上下文", "message")]
     elif key == "blackboard":
+        # 黑板架构的核心是多知识源围绕共享工作区增量推理，因此控制器和黑板必须显式建模。
         nodes = [
             _node("source1", "影像/数据模型", "compute", "独立知识源", 90, 150),
             _node("source2", "文本/规则模型", "compute", "独立知识源", 90, 340),
@@ -616,6 +739,7 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
         ]
         edges = [_edge("source1", "blackboard", "写入线索", "event"), _edge("source2", "blackboard", "写入线索", "event"), _edge("blackboard", "controller", "读取状态"), _edge("controller", "source1", "调度"), _edge("controller", "source2", "调度"), _edge("blackboard", "result", "形成结论")]
     elif key == "repository":
+        # 仓库架构强调统一数据中心和周边工具协作，治理节点用于说明集中权限和版本控制。
         nodes = [
             _node("tool1", "检索工具", "compute", "读取共享知识", 110, 130),
             _node("tool2", "标注/审核工具", "compute", "写入元数据", 110, 370),
@@ -625,6 +749,7 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
         ]
         edges = [_edge("tool1", "repo", "查询/索引"), _edge("tool2", "repo", "写入标注"), _edge("repo", "qa", "检索上下文"), _edge("governance", "repo", "治理策略")]
     elif key == "batch":
+        # 批处理拓扑保留调度器和检查点，用于解释离线作业的定时窗口、失败恢复和重跑能力。
         nodes = [
             _node("sources", "交易/业务数据源", "store", "批量输入", 80, 250),
             _node("scheduler", "作业调度器", "compute", "夜间、日终或定时触发", 270, 250),
@@ -634,6 +759,7 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
         ]
         edges = [_edge("sources", "scheduler", "提交批次"), _edge("scheduler", "batch", "触发作业"), _edge("batch", "checkpoint", "记录进度", "event"), _edge("batch", "output", "输出结果")]
     elif key == "processes":
+        # 进程通信拓扑展示调度进程、消息通道和工作进程，突出并发任务分发和结果回传。
         nodes = [
             _node("scheduler", "调度进程", "compute", "分配任务和URL", 130, 250),
             _node("queue", "消息通道", "event", "进程间通信", 330, 250),
@@ -643,6 +769,7 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
         ]
         edges = [_edge("scheduler", "queue", "投递任务", "message"), _edge("queue", "worker1", "消费任务", "message"), _edge("queue", "worker2", "消费任务", "message"), _edge("worker1", "result", "回传结果", "message"), _edge("worker2", "result", "回传结果", "message")]
     else:
+        # 未命中特定模板时返回通用抽象图，保证前端始终有可解释的最小拓扑可展示。
         nodes = [
             _node("entry", "用户入口", "actor", f"需求领域：{domain}", 90, 250),
             _node("core", top_name.split(" (")[0], "compute", "首选架构核心组件", 360, 250),
@@ -692,6 +819,16 @@ If the report includes a report date or evaluation date, use the exact Report da
 - 缺点/风险（至少2条风险管理建议）"""
 
 async def evaluation(state: AgentState) -> AgentState:
+    """生成最终架构评估报告和解释性拓扑。
+
+    Args:
+        state: 已包含候选架构、需求特征和原始需求的共享状态。
+
+    Returns:
+        写入 candidate_styles、evaluation_report、topology 和 current_stage 的共享状态。
+        模型不可用时返回规则引擎兜底报告，避免同步和 SSE 接口返回空结果。
+    """
+
     logger.info("📊 [评估Agent] 生成评估报告...")
     
     # 评估阶段先走规则引擎再交给 LLM，是为了把课程中的硬约束显式落实到排序里。
@@ -731,6 +868,13 @@ async def evaluation(state: AgentState) -> AgentState:
 
 # ── Build Graph ────────────────────────────────────
 def build_agent_graph() -> StateGraph:
+    """构建 Agent Runtime 的 LangGraph 编排图。
+
+    Returns:
+        已编译的 LangGraph 工作流。节点顺序固定为需求解析、架构匹配和评估生成，
+        入口服务依赖这些阶段名称进行同步响应组装和 SSE 分阶段推送。
+    """
+
     workflow = StateGraph(AgentState)
     
     workflow.add_node("requirement_analysis", requirement_analysis)

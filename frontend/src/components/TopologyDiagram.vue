@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
+// 后端推荐流程会在候选架构报告中附带拓扑节点坐标。
+// 前端只负责按坐标渲染和裁剪文案，不在这里重新计算布局，避免与后端解释文本出现语义偏差。
 export interface TopologyNode {
   id: string
   label: string
@@ -32,10 +34,14 @@ const diagramFrame = ref<HTMLElement | null>(null)
 
 const hasDynamicTopology = computed(() => Boolean(props.topology?.nodes?.length))
 const dynamicNodeMap = computed(() => new Map((props.topology?.nodes || []).map(node => [node.id, node])))
+// 拓扑边来自 LLM/RAG 生成结果，可能引用被上游裁剪或过滤掉的节点。
+// 这里丢弃端点缺失的边，保证 SVG path 计算不会因脏数据中断整张图渲染。
 const dynamicEdges = computed(() => (props.topology?.edges || [])
   .map(edge => ({ ...edge, source: dynamicNodeMap.value.get(edge.from), target: dynamicNodeMap.value.get(edge.to) }))
   .filter(edge => edge.source && edge.target))
 
+// 节点类型颜色用于把用户入口、领域组件、存储、事件和风险控制点分组展示。
+// 未识别类型回退到中性色，兼容后端后续新增的业务节点类型。
 function nodeFill(type: string) {
   if (type === 'store') return 'url(#dyn-green)'
   if (type === 'agent') return 'url(#dyn-violet)'
@@ -56,6 +62,7 @@ function shortText(value = '', limit = 13) {
   return value.length > limit ? `${value.slice(0, limit - 1)}…` : value
 }
 
+// 后端返回的是节点中心点坐标；连线在前端生成曲线，减少节点较近或纵向排列时的重叠。
 function edgePath(edge: { source?: TopologyNode; target?: TopologyNode }) {
   if (!edge.source || !edge.target) return ''
   const dx = Math.abs(edge.target.x - edge.source.x)
@@ -120,6 +127,8 @@ const defs = `
   </defs>
 `
 
+// 内置静态图用于后端暂未返回定制拓扑时的 fallback。
+// 这些图强调典型架构的关键职责边界，避免用户看到空白区域误以为推荐失败。
 function shell(title: string, subtitle: string, body: string) {
   return `
     ${defs}
@@ -289,6 +298,8 @@ const diagrams: Record<string, string> = {
   `),
 }
 
+// 架构名称可能来自中文候选、英文模式名或 LLM 生成的混合标题。
+// 关键词匹配只做展示层兜底，不参与候选排序或报告生成。
 function pickKey(name: string) {
   const normalized = name.toLowerCase()
   if (normalized.includes('cqrs')) return 'cqrs'
@@ -302,6 +313,7 @@ function pickKey(name: string) {
 
 const selectedSVG = computed(() => diagrams[pickKey(props.archName)] ?? diagrams.default)
 
+// 全屏模式复用同一个 SVG 容器，避免为大图复制一份 DOM 后造成状态和无障碍标签不同步。
 async function openExpanded() {
   isExpanded.value = true
   await diagramFrame.value?.requestFullscreen?.()
@@ -318,6 +330,7 @@ function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') closeExpanded()
 }
 
+// 浏览器原生全屏也可能通过 Esc 或系统手势退出，因此需要监听事件反向同步 Vue 状态。
 function handleFullscreenChange() {
   isExpanded.value = document.fullscreenElement === diagramFrame.value
 }
@@ -352,6 +365,7 @@ onBeforeUnmount(() => {
       <button v-if="isExpanded" class="topology-close-button" type="button" aria-label="关闭大图" @click.stop="closeExpanded">
         关闭
       </button>
+      <!-- 后端有定制拓扑时优先展示需求级节点和连线，让图与当前候选报告保持一致。 -->
       <svg v-if="hasDynamicTopology" viewBox="0 0 960 540" class="h-auto w-full topology-svg" role="img" aria-label="需求定制架构拓扑图">
         <defs>
           <marker id="dyn-arrow" markerWidth="10" markerHeight="10" refX="8.5" refY="5" orient="auto">
@@ -415,6 +429,7 @@ onBeforeUnmount(() => {
           <text x="96" y="26" fill="#cbd5e1" font-size="12">{{ topology.requirements.slice(0, 5).join(' / ') }}</text>
         </g>
       </svg>
+      <!-- 当后端只返回候选名称时使用内置架构图兜底，保证推荐结果仍有可读的结构视图。 -->
       <svg v-else viewBox="0 0 960 540" class="h-auto w-full topology-svg" v-html="selectedSVG" />
     </div>
   </section>

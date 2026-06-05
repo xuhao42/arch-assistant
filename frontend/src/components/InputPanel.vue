@@ -9,9 +9,13 @@ const emit = defineEmits<{
   callUtterance: [prompt: string, sessionId: string]
 }>()
 
+// 语音能力由 composable 统一封装，组件只关心输入状态和最终文本，
+// 避免把浏览器识别、通话轮询和朗读控制散落在展示层。
 const { isListening, isCallActive, isSpeaking, statusText, startMic, stopMic, startCall, stopCall, stopSpeaking } = useSpeech()
 const prompt = ref('')
 
+// 示例场景覆盖强一致交易、高并发电商和异步处理流程，
+// 用于引导用户提供会影响架构推荐的关键约束。
 const samplePrompts = [
   '开发银行核心交易系统，需要处理转账、存款、贷款等业务，对数据一致性和审计追踪有极高要求，支持日均百万笔交易。',
   '构建大型 B2C 电商平台，包含商品、订单、支付、物流和评价模块，日活百万级，大促期间流量暴涨。',
@@ -24,10 +28,13 @@ function submitPrompt(text = prompt.value) {
   const value = text.trim()
   if (!value) return
   prompt.value = ''
+  // 每次提交都创建独立会话，便于后端 SSE 或异步分析结果按请求归并，
+  // 避免连续输入时旧结果覆盖新结果。
   emit('submit', value, crypto.randomUUID())
 }
 
 function handleVoiceUtterance(text: string) {
+  // 连续通话会多次产出用户语句，逐句发送可以让后端持续补全需求上下文。
   emit('callUtterance', text, crypto.randomUUID())
 }
 
@@ -45,11 +52,14 @@ async function handleMic() {
     return
   }
   try {
+    // 单次语音输入完成后直接复用文本提交流程，保证语音和键盘输入
+    // 进入后端分析时具有一致的清洗和会话生成规则。
     const text = await startMic()
     prompt.value = text
     submitPrompt(text)
   } catch {
-    // Browser speech recognition can be cancelled or denied by the user.
+    // 浏览器语音识别可能被用户取消或拒绝授权，此处保持静默，
+    // 避免把权限类中断误报为架构分析失败。
   }
 }
 </script>
@@ -73,6 +83,7 @@ async function handleMic() {
         />
 
         <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <!-- 语音按钮状态来自 useSpeech，输入面板只负责把用户意图转成提交事件。 -->
           <div class="flex flex-wrap items-center gap-2">
             <button
               class="toolbar-button"

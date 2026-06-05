@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// 本入口组件负责承接用户架构分析请求，并把后端分阶段返回的特征、
+// 候选架构、拓扑图和报告分发给各展示组件；核心下游为分析 API、
+// SSE 流式通道以及各个结果可视化组件。
 import { computed, onBeforeUnmount, ref } from 'vue'
 import axios from 'axios'
 import CandidateCards, { type Candidate } from './components/CandidateCards.vue'
@@ -11,6 +14,8 @@ import ReportPanel from './components/ReportPanel.vue'
 import TopologyDiagram, { type RequirementTopology } from './components/TopologyDiagram.vue'
 
 interface AnalyzeResult {
+  // 后端会按阶段返回部分字段，因此页面状态允许缺省值；
+  // 这样可以在报告尚未完成前先展示已完成的特征和候选结果。
   features: Record<string, any> | null
   candidates: Candidate[]
   topology: RequirementTopology | null
@@ -45,6 +50,8 @@ let streamController: AbortController | undefined
 const featureList = computed(() => {
   const features = result.value.features
   if (!features) return []
+  // 后端兼容历史字段 features 与新字段 key_requirements；
+  // 前端在这里统一去重和截断，避免标签区被相近特征撑满。
   const raw = [
     ...(Array.isArray(features.features) ? features.features : []),
     ...(Array.isArray(features.key_requirements) ? features.key_requirements : []),
@@ -83,6 +90,8 @@ function isActiveSession(sessionId: string) {
 }
 
 function typeReport(fullText: string, sessionId: string) {
+  // 报告可能在流式请求或 fallback 请求结束后到达；
+  // 每次启动打字机前先停止旧计时器，防止过期会话继续改写当前结果。
   stopReportTyping()
   if (!isActiveSession(sessionId)) return
 
@@ -107,6 +116,8 @@ function normalizeCandidates(value: unknown): Candidate[] {
 }
 
 function applyStreamEvent(data: any, sessionId: string) {
+  // SSE 会按 status、features、candidates、report 等业务阶段推送；
+  // 会话校验可以避免用户连续提交时，较慢的旧请求覆盖新请求页面。
   if (!isActiveSession(sessionId)) return
 
   if (data.event === 'status') {
@@ -155,6 +166,8 @@ function applyStreamEvent(data: any, sessionId: string) {
 }
 
 async function analyzeWithStream(prompt: string, sessionId: string) {
+  // 优先使用流式接口，让用户在特征抽取和候选召回完成后立即看到部分结果；
+  // AbortController 用于在新一轮提交或组件卸载时主动释放连接。
   streamController = new AbortController()
   const response = await fetch('/api/v1/analyze/stream', {
     method: 'POST',
@@ -174,6 +187,7 @@ async function analyzeWithStream(prompt: string, sessionId: string) {
   let buffer = ''
 
   while (true) {
+    // 请求取消后主动 cancel reader，避免浏览器仍持有已经无用的 SSE 连接。
     if (!isActiveSession(sessionId)) {
       await reader.cancel()
       break
@@ -187,6 +201,7 @@ async function analyzeWithStream(prompt: string, sessionId: string) {
     buffer = frames.pop() || ''
 
     for (const frame of frames) {
+      // 后端使用标准 SSE data 行承载 JSON；忽略非 data 行可兼容心跳或扩展字段。
       const dataLine = frame.split('\n').find(line => line.startsWith('data: '))
       if (!dataLine) continue
       applyStreamEvent(JSON.parse(dataLine.slice(6)), sessionId)
@@ -195,6 +210,8 @@ async function analyzeWithStream(prompt: string, sessionId: string) {
 }
 
 async function analyzeWithFallback(prompt: string, sessionId: string) {
+  // 普通接口作为流式通道不可用时的兜底，保证代理、网关或浏览器不支持 SSE 时
+  // 仍能得到完整分析结果，只是失去分阶段展示体验。
   const response = await axios.post('/api/v1/analyze', { prompt, session_id: sessionId }, { timeout: 180000 })
   if (!isActiveSession(sessionId)) return
 
@@ -211,6 +228,8 @@ async function analyzeWithFallback(prompt: string, sessionId: string) {
 }
 
 async function handleSubmit(prompt: string, sessionId: string) {
+  // 每次提交都视为新的分析会话：清空旧结果、终止旧连接，并通过 sessionId
+  // 约束异步回写范围，避免高延迟响应造成界面状态串扰。
   streamController?.abort()
   stopReportTyping()
   activeSessionId.value = sessionId
@@ -305,6 +324,7 @@ onBeforeUnmount(() => {
           </p>
         </section>
 
+        <!-- 下列结果组件消费 SSE 或 fallback 返回的阶段性状态，按分析进度逐步展开页面。 -->
         <FeatureTags v-if="featureList.length" :features="featureList" />
         <CandidateCards v-if="result.candidates.length" :candidates="result.candidates" />
         <div v-if="result.candidates.length" class="grid grid-cols-1 gap-5 lg:grid-cols-2">
