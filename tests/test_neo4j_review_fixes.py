@@ -1,3 +1,8 @@
+"""验证 Neo4j 集成和 LLM 配置相关的回归修复。
+
+测试通过假 Neo4j 驱动、假 LangGraph/LangChain 模块动态加载目标文件，
+避免依赖真实数据库或外部模型，同时保护 JSON 对账、fallback 和配置选择逻辑。
+"""
 import importlib.util
 import sys
 import types
@@ -10,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_module(name: str, path: Path):
+    """按路径动态加载目标模块，方便在测试中替换其外部依赖。"""
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -19,6 +25,7 @@ def load_module(name: str, path: Path):
 
 
 class FakeResult:
+    """模拟 Neo4j 查询结果对象，支持迭代和 single() 两种消费方式。"""
     def __iter__(self):
         return iter([])
 
@@ -34,6 +41,7 @@ class FakeResult:
 
 
 class RecordingSession:
+    """记录所有 Cypher 调用的假 session，用于断言写图行为。"""
     def __init__(self):
         self.queries = []
 
@@ -49,6 +57,7 @@ class RecordingSession:
 
 
 class FakeDriver:
+    """返回固定 session 的假 Neo4j driver。"""
     def __init__(self, session):
         self._session = session
 
@@ -60,6 +69,7 @@ class FakeDriver:
 
 
 def install_neo4j_stubs(driver=None):
+    """向 sys.modules 注入最小 neo4j 模块，隔离真实驱动依赖。"""
     neo4j = types.ModuleType("neo4j")
     exceptions = types.ModuleType("neo4j.exceptions")
 
@@ -82,6 +92,7 @@ def install_neo4j_stubs(driver=None):
 
 
 def load_init_neo4j(driver=None):
+    """加载 init_neo4j.py，并用假 dotenv 与假 Neo4j driver 替代外部依赖。"""
     install_neo4j_stubs(driver)
     dotenv = types.ModuleType("dotenv")
     dotenv.load_dotenv = lambda: None
@@ -90,6 +101,7 @@ def load_init_neo4j(driver=None):
 
 
 def load_neo4j_kb():
+    """加载 Neo4jKnowledgeBase 模块，复用真实 architecture_styles 工具。"""
     install_neo4j_stubs()
     package = types.ModuleType("agent_runtime")
     package.__path__ = []
@@ -105,6 +117,7 @@ def load_neo4j_kb():
 
 
 def load_graph():
+    """加载 graph.py，并注入 LangGraph/LangChain 的最小假模块。"""
     langgraph = types.ModuleType("langgraph")
     langgraph_graph = types.ModuleType("langgraph.graph")
     langgraph_message = types.ModuleType("langgraph.graph.message")
@@ -158,6 +171,7 @@ def load_graph():
 
 
 class LlmConfigTests(unittest.TestCase):
+    """验证 LLM 配置解析不会混用不同 provider 的配置项。"""
     def test_openai_key_uses_openai_defaults(self):
         graph = load_graph()
         values = {"OPENAI_API_KEY": "openai-secret"}
@@ -178,6 +192,7 @@ class LlmConfigTests(unittest.TestCase):
 
 
 class InitNeo4jTests(unittest.TestCase):
+    """验证 Neo4j 初始化脚本不会嵌入旧数据，并能正确判断图谱完整性。"""
     def test_init_script_does_not_embed_architecture_styles(self):
         module = load_init_neo4j()
         self.assertFalse(hasattr(module, "STYLES"))
@@ -219,6 +234,7 @@ class InitNeo4jTests(unittest.TestCase):
 
 
 class Neo4jFallbackTests(unittest.TestCase):
+    """验证 Neo4j 查询失败会标记不可用并让主流程 fallback。"""
     def test_context_query_failure_marks_neo4j_unavailable_and_returns_empty_context(self):
         module = load_neo4j_kb()
         kb = module.Neo4jKnowledgeBase()
@@ -237,6 +253,7 @@ class Neo4jFallbackTests(unittest.TestCase):
 
 
 class Neo4jSyncTests(unittest.TestCase):
+    """验证 JSON 风格和关系同步到 Neo4j 时会重建托管边。"""
     def test_upsert_style_rebuilds_all_managed_relationships(self):
         module = load_neo4j_kb()
         kb = module.Neo4jKnowledgeBase()

@@ -1,4 +1,9 @@
-"""Agent Runtime - FastAPI service for running the multi-agent architecture recommendation pipeline."""
+"""Agent Runtime 服务入口。
+
+该 FastAPI 服务负责接收编排层请求，运行 LangGraph 三 Agent
+架构推荐流水线，并提供知识库维护、历史案例学习和 SSE 流式输出接口。
+它是业务推理的执行层，不直接面向浏览器，而由 Orchestration Engine 调用。
+"""
 import os, sys, json, time, asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -13,13 +18,15 @@ from .architecture_styles import (
 )
 from .graph import agent_graph, AgentState, get_neo4j_kb
 
-# ── Models ─────────────────────────────────────────
+# ── 请求/响应模型：定义编排层和 Agent Runtime 之间的服务契约 ──
 class RunTaskRequest(BaseModel):
+    """一次架构分析任务的请求体。"""
     prompt: str
     session_id: str = "default"
     metadata: dict | None = None
 
 class RunTaskResponse(BaseModel):
+    """三 Agent 流水线完成后的结构化响应。"""
     session_id: str
     features: dict | None = None
     candidates: list | None = None
@@ -29,9 +36,10 @@ class RunTaskResponse(BaseModel):
     current_stage: str
     elapsed_ms: float
 
-# ── App ────────────────────────────────────────────
+# ── 应用生命周期：启动日志和退出日志集中放在这里 ──
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """FastAPI 生命周期钩子，用于记录服务启动和关闭。"""
     logger.info("🚀 Architecture Agent Runtime starting...")
     yield
     logger.info("Agent Runtime shutting down")
@@ -45,11 +53,12 @@ app = FastAPI(
 
 @app.get("/health")
 async def health():
+    """健康检查接口，供 Docker、编排层和验收脚本确认服务在线。"""
     return {"service": "agent-runtime", "status": "healthy"}
 
 @app.post("/api/v1/run", response_model=RunTaskResponse)
 async def run_task(request: RunTaskRequest):
-    """运行三 Agent 协作流水线"""
+    """运行三 Agent 协作流水线并一次性返回完整结果。"""
     t0 = time.perf_counter()
     logger.info(f"📥 Received task: {request.prompt[:80]}...")
     
@@ -106,8 +115,9 @@ async def run_task(request: RunTaskRequest):
 
 @app.post("/api/v1/run/stream")
 async def run_task_stream(request: RunTaskRequest):
-    """SSE 流式返回 Agent 执行进度"""
+    """通过 SSE 分阶段返回 Agent 执行进度和最终报告。"""
     async def event_stream():
+        """内部异步生成器，把 LangGraph 节点事件转换为前端可消费的 SSE。"""
         case_matches = _find_similar_cases(request.prompt)
         case_context = _build_case_context(case_matches)
         state: AgentState = {
@@ -127,7 +137,7 @@ async def run_task_stream(request: RunTaskRequest):
         if case_matches:
             yield f"data: {json.dumps({'event': 'case_matches', 'data': case_matches})}\n\n"
         
-        # Stream through graph steps manually
+        # 手动遍历图执行事件，按阶段拆成 features、candidates、topology、report。
         try:
             async for event in agent_graph.astream(state):
                 node_name = list(event.keys())[0] if event else "unknown"
@@ -159,10 +169,11 @@ async def run_task_stream(request: RunTaskRequest):
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )
 
-# ── Knowledge Evolution ─────────────────────────
+# ── 知识进化：把真实用户需求沉淀为后续 Few-shot 参考 ──
 CASES_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "learned_cases.json")
 
 def _load_cases() -> list[dict]:
+    """读取历史案例库；文件不存在时返回空列表，保证主流程无状态可启动。"""
     if not os.path.exists(CASES_PATH):
         return []
     import json
@@ -170,12 +181,12 @@ def _load_cases() -> list[dict]:
         return json.load(f)
 
 def _save_case(prompt: str, features: dict, candidates: list, report: str, session_id: str = ""):
-    """自动保存分析案例，用于知识进化"""
+    """自动保存分析案例，用于知识进化和相似需求 few-shot 增强。"""
     if session_id.lower().startswith(("batch_", "test_", "smoke_", "e2e_")):
         logger.info(f"📚 知识进化: 跳过测试会话案例保存 ({session_id})")
         return
     cases = _load_cases()
-    # 去重：相似prompt不重复存
+    # 去重：完全相同的 prompt 不重复存，只累计命中次数和最近使用时间。
     prompt_lower = prompt.strip().lower()
     for c in cases:
         if c.get("prompt", "").strip().lower() == prompt_lower:
@@ -195,12 +206,14 @@ def _save_case(prompt: str, features: dict, candidates: list, report: str, sessi
     _write_cases(cases)
 
 def _write_cases(cases: list):
+    """把案例库写回 JSON 文件，保持中文内容不转义。"""
     import json
     os.makedirs(os.path.dirname(CASES_PATH), exist_ok=True)
     with open(CASES_PATH, "w", encoding="utf-8") as f:
         json.dump(cases, f, ensure_ascii=False, indent=2)
 
 def _case_terms(case: dict) -> set[str]:
+    """从历史案例中提取可用于相似度匹配的领域、特征和推荐架构词。"""
     terms = set()
     features = case.get("features", {})
     for value in [
@@ -252,6 +265,7 @@ def _build_case_context(matches: list[dict]) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 class KnowledgeEntry(BaseModel):
+    """在线新增架构风格的请求模型，对应 data/architecture_styles.json 的字段。"""
     name: str
     aliases: list[str] = []
     category: str = ""
@@ -270,6 +284,7 @@ class KnowledgeEntry(BaseModel):
     典型案例: list[str] = []
 
 class FeedbackRequest(BaseModel):
+    """用户手动提交案例反馈的请求模型。"""
     prompt: str
     session_id: str = ""
     rating: int = 5  # 1-5
@@ -277,14 +292,14 @@ class FeedbackRequest(BaseModel):
 
 @app.get("/api/v1/knowledge")
 async def list_knowledge():
-    """列出所有架构风格"""
+    """列出所有架构风格摘要，供管理界面或验收脚本快速查看知识库规模。"""
     from .graph import load_knowledge
     styles = load_knowledge()
     return {"total": len(styles), "styles": [{"name": s["name"], "category": s.get("category",""), "scalability": s.get("scalability",""), "complexity": s.get("complexity","")} for s in styles]}
 
 @app.post("/api/v1/knowledge")
 async def add_knowledge(entry: KnowledgeEntry):
-    """添加新架构风格到知识库"""
+    """添加新架构风格到 JSON 权威知识库，并尽力同步到 Neo4j。"""
     style = entry.model_dump()
     try:
         styles = append_style_atomic(style)
@@ -304,16 +319,16 @@ async def add_knowledge(entry: KnowledgeEntry):
         "fallback": not neo4j_synced,
     }
 
-# ── Case Library ─────────────────────────────
+# ── 案例库接口：用于查看和补充知识进化数据 ──
 @app.get("/api/v1/cases")
 async def list_cases():
-    """列出历史学习案例"""
+    """列出历史学习案例，方便演示知识进化效果。"""
     cases = _load_cases()
     return {"total": len(cases), "cases": cases}
 
 @app.get("/api/v1/cases/stats")
 async def case_stats():
-    """案例库统计"""
+    """返回案例数量、累计运行次数和已覆盖领域数量。"""
     cases = _load_cases()
     return {
         "total_cases": len(cases),
@@ -323,5 +338,5 @@ async def case_stats():
 
 @app.post("/api/v1/cases")
 async def add_case(feedback: FeedbackRequest):
-    """手动提交案例反馈"""
+    """接收手动案例反馈；当前版本只确认接收，不直接写入推荐知识库。"""
     return {"status": "received", "prompt": feedback.prompt[:60], "rating": feedback.rating}

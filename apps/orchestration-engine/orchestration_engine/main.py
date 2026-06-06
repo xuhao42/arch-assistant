@@ -2,6 +2,9 @@
 
 完整流水线:
   User Input → classify_intent → agent_analysis → knowledge_retrieval → generate_report → response
+
+本服务负责把网关请求编排到 Agent Runtime 和 LLM Router。
+它保留响应缓存、上游重试和 SSE 透传逻辑，是前端体验和后端推理服务之间的协调层。
 """
 import os, json, time, asyncio, hashlib
 from contextlib import asynccontextmanager
@@ -11,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel
 
-# ── Config ─────────────────────────────────────────
+# ── 配置：通过环境变量决定上游服务地址和响应缓存策略 ──
 LLM_ROUTER_URL = os.getenv("LLM_ROUTER_HOST", "http://localhost:8002")
 AGENT_RUNTIME_URL = os.getenv("AGENT_RUNTIME_HOST", "http://localhost:8003")
 CACHE_TTL = int(os.getenv("RESPONSE_CACHE_TTL", "300"))
@@ -20,19 +23,23 @@ CACHE_MAX = int(os.getenv("RESPONSE_CACHE_MAX", "500"))
 _cache: dict[str, tuple[dict, float]] = {}  # (full_response, timestamp)
 
 def _cache_key(prompt: str) -> str:
+    """把用户需求规范化后生成缓存键，避免大小写和首尾空白影响命中。"""
     return hashlib.sha256(prompt.strip().lower().encode()).hexdigest()
 
-# ── Models ─────────────────────────────────────────
+# ── 请求/响应模型：定义网关与编排层之间的 API 契约 ──
 class PipelineRequest(BaseModel):
+    """前端一次分析请求进入编排层后的请求体。"""
     prompt: str
     session_id: str = "default"
 
 class StepInfo(BaseModel):
+    """记录流水线中单个步骤的执行状态，便于前端展示和排障。"""
     name: str
     status: str
     output: dict | None = None
 
 class PipelineResponse(BaseModel):
+    """编排层返回给网关的完整架构分析响应。"""
     session_id: str
     features: dict | None = None
     candidates: list | None = None
@@ -42,10 +49,11 @@ class PipelineResponse(BaseModel):
     steps: list[StepInfo] = []
     cached: bool = False
 
-# ── HTTP Client ────────────────────────────────────
+# ── HTTP 客户端：统一管理上游调用超时和重试 ──
 client = httpx.AsyncClient(timeout=120.0)
 
 async def call_with_retry(method: str, url: str, **kwargs) -> httpx.Response:
+    """调用上游服务并对临时失败做最多三次重试。"""
     for attempt in range(3):
         try:
             r = await client.request(method, url, **kwargs)
@@ -57,9 +65,10 @@ async def call_with_retry(method: str, url: str, **kwargs) -> httpx.Response:
             await asyncio.sleep(0.5 * (attempt + 1))
     raise HTTPException(status_code=502, detail="Upstream service unavailable")
 
-# ── App ────────────────────────────────────────────
+# ── 应用入口：编排服务的生命周期和路由定义 ──
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """FastAPI 生命周期钩子，服务退出时关闭共享 HTTP 客户端。"""
     logger.info("🎯 Architecture Orchestration Engine starting...")
     yield
     await client.aclose()
@@ -72,6 +81,7 @@ app = FastAPI(
 
 @app.get("/health")
 async def health():
+    """健康检查接口，供网关、Docker 和验收脚本探活。"""
     return {"service": "orchestration-engine", "status": "healthy"}
 
 @app.post("/api/v1/analyze", response_model=PipelineResponse)
@@ -80,7 +90,7 @@ async def analyze(request: PipelineRequest):
     t0 = time.perf_counter()
     logger.info(f"📥 [{request.session_id}] 收到请求: {request.prompt[:80]}...")
     
-    # 缓存检查
+    # 缓存检查：相同需求在 TTL 内直接复用完整响应，降低 LLM 和 Agent 调用成本。
     key = _cache_key(request.prompt)
     if CACHE_TTL > 0 and key in _cache:
         cached_data, cached_ts = _cache[key]
@@ -99,7 +109,7 @@ async def analyze(request: PipelineRequest):
     
     steps = []
     
-    # Step 1: 调用 Agent Runtime（三 Agent 协作）
+    # Step 1: 调用 Agent Runtime（三 Agent 协作），这是结构化特征和候选架构的主来源。
     logger.info("🤖 调用 Agent Runtime...")
     try:
         r = await call_with_retry(
@@ -121,7 +131,7 @@ async def analyze(request: PipelineRequest):
     case_matches = agent_result.get("case_matches")
     report = agent_result.get("report")
     
-    # Step 2: LLM 润色报告（可选）
+    # Step 2: LLM 润色报告（可选），失败不影响主推荐结果返回。
     if report and LLM_ROUTER_URL:
         try:
             logger.info("✨ LLM 润色报告...")
@@ -143,7 +153,7 @@ async def analyze(request: PipelineRequest):
             logger.warning(f"LLM 润色失败(非致命): {e}")
             steps.append(StepInfo(name="report_polish", status="skipped"))
     
-    # 缓存完整响应
+    # 缓存完整响应：达到容量上限时淘汰最旧条目，避免内存无限增长。
     if report and CACHE_TTL > 0:
         if len(_cache) >= CACHE_MAX:
             oldest = min(_cache, key=lambda k: _cache[k][1])
@@ -165,8 +175,9 @@ async def analyze(request: PipelineRequest):
 
 @app.post("/api/v1/analyze/stream")
 async def analyze_stream(request: PipelineRequest):
-    """SSE 流式返回"""
+    """把 Agent Runtime 的 SSE 分析事件透传给网关。"""
     async def event_stream():
+        """内部流式生成器，负责建立上游流连接并逐行转发。"""
         yield f"data: {json.dumps({'event': 'status', 'message': '🤖 正在调用 Agent Runtime...'})}\n\n"
         
         try:

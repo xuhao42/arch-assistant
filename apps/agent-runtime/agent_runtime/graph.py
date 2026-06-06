@@ -11,7 +11,7 @@
 # 这里之所以用 LangGraph，是为了把三个职责拆成清晰的节点，便于调试、流式输出和后续扩展。
 # Neo4j 只是知识增强层，不可用时会自动回退到 JSON，保证主流程稳定。
 # 也就是说，这里是“LLM + 规则引擎 + 知识库”共同工作的核心地方。
-# 下面这些注释会重点说明：为什么要补规则、为什么要降权、为什么要 fallback。
+# 下面这些注释会重点说明：为什么要补规则、为什么要降权、为什么要回退。
 import json, re, os
 from datetime import date
 from typing import TypedDict, Annotated, Literal
@@ -26,6 +26,7 @@ from .neo4j_kb import Neo4jKnowledgeBase  # Neo4j 图数据库查询
 ENV_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env")
 
 def _read_env_value(key: str) -> str:
+    """读取环境变量；未注入到进程时再从项目根目录 .env 中兜底读取。"""
     val = os.getenv(key, "").strip()
     if val:
         return val
@@ -50,7 +51,7 @@ _neo4j_kb: Neo4jKnowledgeBase | None = None
 def get_neo4j_kb() -> Neo4jKnowledgeBase:
     global _neo4j_kb
     # 用单例缓存 Neo4j 封装，避免每次请求都重复初始化驱动，减少连接开销和启动抖动。
-    # 这里不直接抛异常，而是让上层在可用时增强、不可用时 fallback 到 JSON 知识库。
+    # 这里不直接抛异常，而是让上层在可用时增强、不可用时回退到 JSON 知识库。
     if _neo4j_kb is None:
         _neo4j_kb = Neo4jKnowledgeBase()
     return _neo4j_kb
@@ -71,11 +72,15 @@ class AgentState(TypedDict):
     next_step: str
     case_context: str  # 知识进化：历史案例Few-shot上下文
 
-# ── LLM ────────────────────────────────────────────
+# ── 大模型客户端 ────────────────────────────────────
 _llm: ChatOpenAI | None = None
 
 def resolve_llm_config() -> dict[str, str]:
-    """Resolve one provider's credentials and defaults without mixing providers."""
+    """解析一个可用 LLM provider 的密钥、地址和模型名。
+
+    DeepSeek 优先，OpenAI 作为备用；函数只返回同一 provider 的完整配置，
+    避免出现 DeepSeek key 搭配 OpenAI base_url 这类混用错误。
+    """
     deepseek_api_key = _read_env_value("DEEPSEEK_API_KEY")
     if deepseek_api_key:
         return {
@@ -95,6 +100,7 @@ def resolve_llm_config() -> dict[str, str]:
     raise ValueError("Missing API key: set DEEPSEEK_API_KEY or OPENAI_API_KEY in .env")
 
 def get_llm() -> ChatOpenAI:
+    """创建并缓存 LangChain ChatOpenAI 客户端，供三个 Agent 节点复用。"""
     global _llm
     if _llm is not None:
         return _llm
@@ -108,9 +114,9 @@ def get_llm() -> ChatOpenAI:
     )
     return _llm
 
-# ── Knowledge Base ─────────────────────────────────
+# ── 知识库摘要 ──────────────────────────────────────
 def load_knowledge() -> list[dict]:
-    # JSON is authoritative even when Neo4j is available.
+    """读取权威架构知识库；即使 Neo4j 可用，JSON 仍是最终事实来源。"""
     return load_styles()
 
 def build_knowledge_summary() -> str:
@@ -151,7 +157,7 @@ def build_knowledge_summary() -> str:
         logger.info("📄 Neo4j 不可用，使用 JSON 知识库")
     return "\n".join(format_style_summary(style) for style in load_normalized_styles())
 
-# ── Step 1: Requirement Analysis Agent ─────────────
+# ── 步骤 1：需求解析 Agent ──────────────────────────
 REQUIREMENT_ANALYSIS_PROMPT = """你是一个软件架构需求分析师。从用户描述中提取架构关键特征。
 输出严格JSON格式，不要markdown代码块：
 
@@ -176,6 +182,7 @@ REQUIREMENT_ANALYSIS_PROMPT = """你是一个软件架构需求分析师。从�
 """
 
 async def requirement_analysis(state: AgentState) -> AgentState:
+    """需求解析 Agent：把用户自然语言需求抽取为统一结构化特征。"""
     # 第一个 Agent 先把自由文本压缩成结构化特征，后续匹配和规则引擎才能基于统一字段继续处理。
     # 之所以先做结构化抽取，是因为后面的候选排序和规则校验都依赖统一字段，而不是原始自然语言。
     logger.info("🔍 [需求解析Agent] 开始分析需求...")
@@ -210,7 +217,7 @@ async def requirement_analysis(state: AgentState) -> AgentState:
     logger.info(f"   提取特征: {json.dumps(result, ensure_ascii=False)[:200]}")
     return state
 
-# ── Step 2: Architecture Matching Agent ────────────
+# ── 步骤 2：架构匹配 Agent ──────────────────────────
 ARCHITECTURE_MATCHING_PROMPT = """你是一个软件架构匹配专家。根据需求特征推荐最匹配的3种候选架构风格。
 
 ⚠️ 核心原则（必须遵守）：
@@ -252,6 +259,7 @@ ARCHITECTURE_MATCHING_PROMPT = """你是一个软件架构匹配专家。根据�
 }}"""
 
 async def architecture_matching(state: AgentState) -> AgentState:
+    """架构匹配 Agent：结合知识库、图谱上下文和历史案例召回候选架构。"""
     # 第二个 Agent 负责“初筛候选”，先让 LLM 结合知识库给出候选，再交给规则引擎做二次校验。
     # 这样做的原因是 LLM 负责广泛召回，规则引擎负责把课程场景中的硬约束拉回来。
     logger.info("🎯 [架构匹配Agent] 开始匹配...")
@@ -310,7 +318,7 @@ async def architecture_matching(state: AgentState) -> AgentState:
     logger.info(f"   匹配结果: {[c.get('name', '?') for c in candidates]}")
     return state
 
-# ── Step 3 & 4: Rule Engine Validation ─────────────
+# ── 步骤 3 与 4：规则引擎校验 ───────────────────────
 def rule_engine_validate(candidates: list[dict], features: dict, requirement: str = "") -> list[dict]:
     """规则引擎：负面过滤 + 正向加分。
 
@@ -399,9 +407,8 @@ def rule_engine_validate(candidates: list[dict], features: dict, requirement: st
                 candidate_map[name] = candidates[-1]
                 break
 
-    # Course-reference scenario:
-    # cross-platform IM + massive online users + realtime reliable messages + future video calls
-    # should rank Event-Driven as the core option and Microservices as the backup option.
+    # 课程参考场景：跨平台即时通讯、海量在线用户、实时可靠消息和未来视频通话能力，
+    # 应把事件驱动作为核心推荐，把微服务作为模块扩展的备选推荐。
     im_realtime_signal = has_any(["即时通讯", "im", "聊天", "消息", "实时", "万人", "在线", "视频通话", "跨平台"])
     cqrs_strong_signal = has_any(["银行", "交易", "转账", "存款", "贷款", "审计", "强一致", "事务", "读写分离", "事件溯源"])
     if im_realtime_signal and not cqrs_strong_signal:
@@ -512,8 +519,9 @@ def rule_engine_validate(candidates: list[dict], features: dict, requirement: st
     
     return validated
 
-# ── Requirement-aware Topology ─────────────────────
+# ── 需求感知拓扑生成 ────────────────────────────────
 def _topology_key(arch_name: str) -> str:
+    """把架构名称归一化成前端拓扑模板键。"""
     name = arch_name.lower()
     if "cqrs" in name:
         return "cqrs"
@@ -548,13 +556,19 @@ def _topology_key(arch_name: str) -> str:
     return "default"
 
 def _node(node_id: str, label: str, node_type: str, hint: str, x: int, y: int) -> dict:
+    """构造前端拓扑节点，统一节点字段和布局坐标。"""
     return {"id": node_id, "label": label, "type": node_type, "hint": hint, "x": x, "y": y}
 
 def _edge(source: str, target: str, label: str, edge_type: str = "sync") -> dict:
+    """构造前端拓扑边，统一来源、目标、标签和交互类型。"""
     return {"from": source, "to": target, "label": label, "type": edge_type}
 
 def build_requirement_topology(requirement: str, features: dict, candidates: list[dict]) -> dict:
-    """基于需求特征和首选架构生成可视化拓扑模型，前端可直接渲染节点/边。"""
+    """基于需求特征和首选架构生成可视化拓扑模型。
+
+    输入是原始需求、结构化特征和已排序候选架构；输出包含标题、
+    架构模板键、需求摘要、节点和边，前端无需再理解推荐逻辑即可渲染。
+    """
     top_name = candidates[0].get("name", "通用架构") if candidates else "通用架构"
     key = _topology_key(top_name)
     req = requirement.lower()
@@ -565,6 +579,7 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
     ][:6]
 
     def pipe_labels() -> list[str]:
+        """根据需求领域定制管道-过滤器架构的阶段名称。"""
         if any(word in req for word in ["视频", "转码", "水印", "缩略图", "审核"]):
             return ["视频上传", "转码", "加水印", "生成缩略图", "内容审核", "发布/存储"]
         if any(word in req for word in ["ci/cd", "构建", "测试", "部署"]):
@@ -660,7 +675,7 @@ def build_requirement_topology(requirement: str, features: dict, candidates: lis
         "edges": edges,
     }
 
-# ── Step 4: Evaluation Agent ───────────────────────
+# ── 步骤 4：评估 Agent ──────────────────────────────
 EVALUATION_PROMPT = """你是一个软件架构评估专家。基于候选架构风格进行多维度对比分析。
 
 候选架构及匹配分数：
@@ -692,6 +707,7 @@ If the report includes a report date or evaluation date, use the exact Report da
 - 缺点/风险（至少2条风险管理建议）"""
 
 async def evaluation(state: AgentState) -> AgentState:
+    """评估 Agent：规则校验候选架构、生成报告并附带需求拓扑。"""
     logger.info("📊 [评估Agent] 生成评估报告...")
     
     # 评估阶段先走规则引擎再交给 LLM，是为了把课程中的硬约束显式落实到排序里。
@@ -729,8 +745,9 @@ async def evaluation(state: AgentState) -> AgentState:
     logger.info("   评估报告生成完成")
     return state
 
-# ── Build Graph ────────────────────────────────────
+# ── 构建 LangGraph 工作流 ───────────────────────────
 def build_agent_graph() -> StateGraph:
+    """编译 LangGraph 工作流，把三个 Agent 节点串成固定执行链。"""
     workflow = StateGraph(AgentState)
     
     workflow.add_node("requirement_analysis", requirement_analysis)

@@ -1,9 +1,9 @@
 {
   "summary": {
-    "passed": 19,
-    "failed": 1,
-    "total": 20,
-    "accuracy": "19/20 (95.0%)"
+    "passed": 27,
+    "failed": 2,
+    "total": 29,
+    "accuracy": "27/29 (93.1%)"
   },
   "results": [
     {
@@ -13,37 +13,37 @@
       "top": "事件驱动架构 (Event-Driven Architecture)",
       "candidates": [
         "事件驱动架构 (Event-Driven Architecture)",
-        "对等架构 (Peer-to-Peer Architecture)",
-        "CQRS (命令查询职责分离)"
+        "微服务架构 (Microservices Architecture)",
+        "对等架构 (Peer-to-Peer Architecture)"
       ],
       "hit": true,
-      "elapsed": 85731
+      "elapsed": 72766
     },
     {
       "id": 2,
       "desc": "构建一个大型B2C电商平台，包含商品管理、订单处理、支付、物流、用户评价等模块，日活百万级，大促期间流量暴涨",
       "expected": "微服务架构",
-      "top": "CQRS (命令查询职责分离)",
+      "top": "Space-Based架构 (基于空间的架构)",
       "candidates": [
-        "CQRS (命令查询职责分离)",
         "Space-Based架构 (基于空间的架构)",
+        "CQRS (命令查询职责分离)",
         "事件驱动架构 (Event-Driven Architecture)"
       ],
       "hit": false,
-      "elapsed": 82727
+      "elapsed": 38121
     },
     {
       "id": 3,
       "desc": "做一个个人技术博客，支持 Markdown 编辑、分类标签、评论、RSS 订阅，预计日访问量几百",
       "expected": "MVC架构",
-      "top": "MVC架构 (Model-View-Controller)",
+      "top": "面向对象架构 (Object-Oriented Architecture)",
       "candidates": [
+        "面向对象架构 (Object-Oriented Architecture)",
         "MVC架构 (Model-View-Controller)",
-        "分层架构 (Layered Architecture)",
-        "插件架构/微内核 (Plugin/Microkernel Architecture)"
+        "分层架构 (Layered Architecture)"
       ],
       "hit": true,
-      "elapsed": 82140
+      "elapsed": 33605
     },
     {
       "id": 4,
@@ -56,7 +56,7 @@
         "微服务架构 (Microservices Architecture)"
       ],
       "hit": true,
-      "elapsed": 97831
+      "elapsed": 38681
     },
     {
       "id": 5,
@@ -66,10 +66,10 @@
       "candidates": [
         "CQRS (命令查询职责分离)",
         "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)",
-        "分层架构 (Layered Architecture)"
+        "事件驱动架构 (Event-Driven Architecture)"
       ],
       "hit": true,
-      "elapsed": 105503
+      "elapsed": 40668
     },
     {
       "id": 6,
@@ -82,7 +82,7 @@
         "微服务架构 (Microservices Architecture)"
       ],
       "hit": true,
-      "elapsed": 77904
+      "elapsed": 35745
     },
     {
       "id": 7,
@@ -91,11 +91,11 @@
       "top": "插件架构/微内核 (Plugin/Microkernel Architecture)",
       "candidates": [
         "插件架构/微内核 (Plugin/Microkernel Architecture)",
-        "CQRS (命令查询职责分离)",
-        "事件驱动架构 (Event-Driven Architecture)"
+        "事件驱动架构 (Event-Driven Architecture)",
+        "微服务架构 (Microservices Architecture)"
       ],
       "hit": true,
-      "elapsed": 79464
+      "elapsed": 40956
     },
     {
       "id": 8,
@@ -104,11 +104,11 @@
       "top": "对等架构 (Peer-to-Peer Architecture)",
       "candidates": [
         "对等架构 (Peer-to-Peer Architecture)",
-        "管道-过滤器架构 (Pipe-Filter Architecture)",
-        "事件驱动架构 (Event-Driven Architecture)"
+        "事件驱动架构 (Event-Driven Architecture)",
+        "管道-过滤器架构 (Pipe-Filter Architecture)"
       ],
       "hit": true,
-      "elapsed": 68141
+      "elapsed": 39739
     },
     {
       "id": 9,
@@ -121,33 +121,33 @@
         "事件驱动架构 (Event-Driven Architecture)"
       ],
       "hit": true,
-      "elapsed": 76185
+      "elapsed": 40347
     },
     {
       "id": 10,
       "desc": "开发一个企业内部OA系统，包含审批流、考勤、公告、文档管理、邮件集成等功能，用户量几千人",
       "expected": "分层架构",
-      "top": "分层架构 (Layered Architecture)",
+      "top": "规则系统架构 (Rule-Based System Architecture)",
       "candidates": [
-        "分层架构 (Layered Architecture)",
-        "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)",
-        "微服务架构 (Microservices Architecture)"
+        "规则系统架构 (Rule-Based System Architecture)",
+        "分层架构",
+        "六边形架构/端口适配器"
       ],
       "hit": true,
-      "elapsed": 83819
+      "elapsed": 40341
     },
     {
       "id": 11,
       "desc": "构建一个文件同步服务，支持多端文件实时同步、版本历史、冲突解决、离线编辑",
       "expected": "CQRS + 事件溯源",
-      "top": "CQRS (命令查询职责分离)",
+      "top": "批处理架构 (Batch Processing Architecture)",
       "candidates": [
-        "CQRS (命令查询职责分离)",
-        "对等架构 (Peer-to-Peer Architecture)",
-        "事件驱动架构 (Event-Driven Architecture)"
+        "批处理架构 (Batch Processing Architecture)",
+        "事件驱动架构 (Event-Driven Architecture)",
+        "微服务架构 (Microservices Architecture)"
       ],
-      "hit": true,
-      "elapsed": 84982
+      "hit": false,
+      "elapsed": 39121
     },
     {
       "id": 12,
@@ -160,20 +160,20 @@
         "分层架构"
       ],
       "hit": true,
-      "elapsed": 75218
+      "elapsed": 39762
     },
     {
       "id": 13,
       "desc": "构建在线教育平台，包括课程管理、直播授课、作业提交批改、考试系统、学习进度追踪",
       "expected": "微服务架构",
-      "top": "微服务架构 (Microservices Architecture)",
+      "top": "事件驱动架构 (Event-Driven Architecture)",
       "candidates": [
-        "微服务架构 (Microservices Architecture)",
         "事件驱动架构 (Event-Driven Architecture)",
+        "微服务架构 (Microservices Architecture)",
         "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)"
       ],
       "hit": true,
-      "elapsed": 86959
+      "elapsed": 42437
     },
     {
       "id": 14,
@@ -183,23 +183,23 @@
       "candidates": [
         "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)",
         "CQRS (命令查询职责分离)",
-        "分层架构 (Layered Architecture)"
+        "SOA (面向服务架构)"
       ],
       "hit": true,
-      "elapsed": 81657
+      "elapsed": 35152
     },
     {
       "id": 15,
       "desc": "实现一个类似微博/Twitter的Feed流系统，支持用户发布动态、关注关系、Feed聚合和实时推送",
       "expected": "CQRS + 事件驱动",
-      "top": "CQRS (命令查询职责分离)",
+      "top": "面向对象架构 (Object-Oriented Architecture)",
       "candidates": [
+        "面向对象架构 (Object-Oriented Architecture)",
         "CQRS (命令查询职责分离)",
-        "事件驱动架构 (Event-Driven Architecture)",
-        "微服务架构 (Microservices Architecture)"
+        "事件驱动架构 (Event-Driven Architecture)"
       ],
       "hit": true,
-      "elapsed": 75695
+      "elapsed": 40944
     },
     {
       "id": 16,
@@ -209,10 +209,10 @@
       "candidates": [
         "SOA (面向服务架构)",
         "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)",
-        "CQRS (命令查询职责分离)"
+        "事件驱动架构 (Event-Driven Architecture)"
       ],
       "hit": true,
-      "elapsed": 86578
+      "elapsed": 41696
     },
     {
       "id": 17,
@@ -221,11 +221,11 @@
       "top": "Space-Based架构 (基于空间的架构)",
       "candidates": [
         "Space-Based架构 (基于空间的架构)",
-        "CQRS (命令查询职责分离)",
-        "对等架构 (Peer-to-Peer Architecture)"
+        "事件驱动架构 (Event-Driven Architecture)",
+        "微服务架构 (Microservices Architecture)"
       ],
       "hit": true,
-      "elapsed": 68673
+      "elapsed": 39013
     },
     {
       "id": 18,
@@ -238,7 +238,7 @@
         "事件驱动架构 (Event-Driven Architecture)"
       ],
       "hit": true,
-      "elapsed": 68715
+      "elapsed": 41090
     },
     {
       "id": 19,
@@ -248,23 +248,140 @@
       "candidates": [
         "对等架构 (Peer-to-Peer Architecture)",
         "CQRS (命令查询职责分离)",
-        "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)"
+        "事件驱动架构 (Event-Driven Architecture)"
       ],
       "hit": true,
-      "elapsed": 76229
+      "elapsed": 36499
     },
     {
       "id": 20,
       "desc": "开发一个企业级CI/CD平台，支持代码构建、自动化测试、制品管理、多环境部署、审批流程",
       "expected": "管道-过滤器架构",
-      "top": "管道-过滤器架构",
+      "top": "规则系统架构 (Rule-Based System Architecture)",
       "candidates": [
+        "规则系统架构 (Rule-Based System Architecture)",
         "管道-过滤器架构",
-        "事件驱动架构",
-        "插件架构"
+        "事件驱动架构"
       ],
       "hit": true,
-      "elapsed": 66617
+      "elapsed": 37508
+    },
+    {
+      "id": 21,
+      "desc": "银行每天夜间需要对上百万笔交易进行日终清算、对账、生成监管报表，允许离线执行但要求可重跑和审计。",
+      "expected": "批处理架构",
+      "top": "批处理架构 (Batch Processing Architecture)",
+      "candidates": [
+        "批处理架构 (Batch Processing Architecture)",
+        "CQRS (命令查询职责分离)",
+        "管道-过滤器架构 (Pipe-Filter Architecture)"
+      ],
+      "hit": true,
+      "elapsed": 35647
+    },
+    {
+      "id": 22,
+      "desc": "开发一个本地命令行工具，按固定流程扫描目录、解析文件名、移动文件并输出统计结果，功能简单稳定。",
+      "expected": "主程序-子过程架构",
+      "top": "主程序-子过程架构 (Main Program-Subroutine Architecture)",
+      "candidates": [
+        "主程序-子过程架构 (Main Program-Subroutine Architecture)",
+        "管道-过滤器架构 (Pipe-Filter Architecture)",
+        "分层架构 (Layered Architecture)"
+      ],
+      "hit": true,
+      "elapsed": 31939
+    },
+    {
+      "id": 23,
+      "desc": "开发一个图形建模编辑器，包含图形对象、连接线、属性面板、撤销重做和多种图元扩展。",
+      "expected": "面向对象架构",
+      "top": "面向对象架构 (Object-Oriented Architecture)",
+      "candidates": [
+        "面向对象架构 (Object-Oriented Architecture)",
+        "插件架构/微内核 (Plugin/Microkernel Architecture)",
+        "MVC架构 (Model-View-Controller)"
+      ],
+      "hit": true,
+      "elapsed": 42706
+    },
+    {
+      "id": 24,
+      "desc": "多个检索、标注、审核和问答工具需要围绕统一知识库协作，共享文档、元数据和权限。",
+      "expected": "仓库架构",
+      "top": "仓库架构 (Repository Architecture)",
+      "candidates": [
+        "仓库架构 (Repository Architecture)",
+        "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)",
+        "分层架构 (Layered Architecture)"
+      ],
+      "hit": true,
+      "elapsed": 41923
+    },
+    {
+      "id": 25,
+      "desc": "构建医学辅助诊断系统，影像模型、文本模型、规则模型和医生反馈需要在共享工作区中逐步补充诊断结论。",
+      "expected": "黑板架构",
+      "top": "黑板架构 (Blackboard Architecture) [以数据为中心体系结构风格]",
+      "candidates": [
+        "黑板架构 (Blackboard Architecture) [以数据为中心体系结构风格]",
+        "规则系统架构 (Rule-Based System Architecture) [虚拟机体系结构风格]",
+        "六边形架构/端口适配器 (Hexagonal/Ports & Adapters) [架构模式]"
+      ],
+      "hit": true,
+      "elapsed": 43903
+    },
+    {
+      "id": 26,
+      "desc": "开发一个自动化平台，用户编写领域脚本描述任务流程，系统运行时解析脚本并执行对应动作。",
+      "expected": "解释器架构",
+      "top": "解释器架构",
+      "candidates": [
+        "解释器架构",
+        "管道-过滤器架构",
+        "主程序-子过程架构"
+      ],
+      "hit": true,
+      "elapsed": 39864
+    },
+    {
+      "id": 27,
+      "desc": "信贷审批需要根据收入、征信、负债率、地区政策等大量可配置规则给出通过、拒绝或人工复核建议。",
+      "expected": "规则系统架构",
+      "top": "规则系统架构 (Rule-Based System Architecture)",
+      "candidates": [
+        "规则系统架构 (Rule-Based System Architecture)",
+        "六边形架构/端口适配器 (Hexagonal/Ports & Adapters)",
+        "事件驱动架构 (Event-Driven Architecture)"
+      ],
+      "hit": true,
+      "elapsed": 38745
+    },
+    {
+      "id": 28,
+      "desc": "构建多进程分布式爬虫，调度进程分发URL，多个工作进程抓取页面并通过消息通道回传结果。",
+      "expected": "进程通信架构",
+      "top": "进程通信架构 (Communicating Processes Architecture)",
+      "candidates": [
+        "进程通信架构 (Communicating Processes Architecture)",
+        "Serverless架构",
+        "事件驱动架构 (Event-Driven Architecture)"
+      ],
+      "hit": true,
+      "elapsed": 39842
+    },
+    {
+      "id": 29,
+      "desc": "构建多Agent研究助手，规划Agent拆解问题，检索Agent查资料，评审Agent校验结论，最终由协调Agent汇总",
+      "expected": "多Agent架构",
+      "top": "多Agent架构 (Multi-Agent Architecture)",
+      "candidates": [
+        "多Agent架构 (Multi-Agent Architecture)",
+        "黑板架构 (Blackboard Architecture)",
+        "事件驱动架构 (Event-Driven Architecture)"
+      ],
+      "hit": true,
+      "elapsed": 36451
     }
   ]
 }

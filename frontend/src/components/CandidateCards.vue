@@ -1,5 +1,7 @@
 <script setup lang="ts">
+// 候选架构卡片组件：展示前三个推荐架构、匹配度、推荐理由和风险提示。
 export interface Candidate {
+  // 后端返回的候选架构结构，rule_engine_note 用于解释规则引擎的加减分。
   name: string
   match_score: number
   match_reasons?: string[]
@@ -13,6 +15,7 @@ const rankLabels = ['首选', '备选', '补充']
 const rankClasses = ['candidate-primary', 'candidate-secondary', 'candidate-tertiary']
 
 function shortName(name: string) {
+  // 去掉括号中的英文全称，让卡片标题在窄屏中更紧凑。
   return name.replace(/\s*\(.+?\)/g, '').trim()
 }
 </script>
