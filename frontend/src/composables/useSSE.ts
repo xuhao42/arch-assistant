@@ -1,5 +1,6 @@
 import { readonly, ref } from 'vue'
 
+// SSEStep 描述前端进度条中的一个阶段，和后端事件名称保持松耦合。
 export interface SSEStep {
   name: string
   status: 'pending' | 'active' | 'done' | 'error'
@@ -15,20 +16,24 @@ const initialSteps: SSEStep[] = [
 ]
 
 export function useSSE() {
+  // 组合函数封装 SSE 分析流程，适合独立组件复用流式进度和错误状态。
   const steps = ref<SSEStep[]>(initialSteps.map(step => ({ ...step })))
   const isStreaming = ref(false)
   const error = ref<string | null>(null)
 
   function resetSteps() {
+    // 每次新请求都复制初始数组，避免直接复用对象造成状态串扰。
     steps.value = initialSteps.map(step => ({ ...step }))
   }
 
   function updateStep(name: string, status: SSEStep['status']) {
+    // 根据阶段名更新状态；未知阶段直接忽略，兼容后端新增事件。
     const step = steps.value.find(item => item.name === name)
     if (step) step.status = status
   }
 
   async function streamAnalyze(prompt: string, sessionId: string): Promise<any> {
+    // 发起流式分析请求，并把 SSE 事件累积成一个最终结果对象返回。
     isStreaming.value = true
     error.value = null
     resetSteps()
@@ -55,6 +60,7 @@ export function useSSE() {
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
+        // SSE frame 可能跨网络包到达，因此最后一段暂存到 buffer。
         const frames = buffer.split('\n\n')
         buffer = frames.pop() || ''
 
@@ -85,7 +91,7 @@ export function useSSE() {
                 break
             }
           } catch {
-            // Ignore malformed partial frames.
+            // 忽略暂时不完整或格式异常的帧，避免单条坏数据中断整个流。
           }
         }
       }

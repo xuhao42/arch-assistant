@@ -1,10 +1,12 @@
 <script setup lang="ts">
+// Vite 默认示例组件：当前主应用未使用，保留用于验证前端脚手架和 HMR 行为。
 import { ref } from 'vue'
 import viteLogo from '../assets/vite.svg'
 import heroImg from '../assets/hero.png'
 import vueLogo from '../assets/vue.svg'
 
 const count = ref(0)
+// count 仅服务于示例按钮，点击后验证 Vue 响应式更新是否正常。
 </script>
 
 <template>

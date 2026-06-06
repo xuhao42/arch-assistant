@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// 雷达图组件：把候选架构映射到六个质量属性维度，用 canvas 绘制对比图。
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Candidate } from './CandidateCards.vue'
 
@@ -6,6 +7,7 @@ const props = defineProps<{ candidates: Candidate[] }>()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
 const dimensions = [
+  // 维度顺序同时决定雷达图轴线顺序和得分数组索引。
   { key: 'scalability', label: '扩展性' },
   { key: 'performance', label: '性能' },
   { key: 'coupling', label: '低耦合' },
@@ -15,6 +17,7 @@ const dimensions = [
 ]
 
 const profileMap: Record<string, number[]> = {
+  // 每类架构的课程化经验评分，范围 1-5，越高代表该维度越有优势。
   layered: [2, 3, 2, 5, 2, 3],
   microservices: [5, 3, 5, 2, 5, 4],
   event: [5, 5, 5, 2, 4, 3],
@@ -30,6 +33,7 @@ const profileMap: Record<string, number[]> = {
 }
 
 function archKey(name: string) {
+  // 把中英文架构名称归一化为 profileMap 的键。
   const n = name.toLowerCase()
   if (n.includes('microservice') || n.includes('微服务')) return 'microservices'
   if (n.includes('event') || n.includes('事件')) return 'event'
@@ -46,6 +50,7 @@ function archKey(name: string) {
 }
 
 function scoresFor(candidate: Candidate) {
+  // 未识别架构默认按分层架构展示，避免图表空白。
   return profileMap[archKey(candidate.name)] ?? profileMap.layered
 }
 
@@ -53,6 +58,7 @@ const lineColors = ['#22d3ee', '#a78bfa', '#f59e0b']
 const fillColors = ['rgba(34, 211, 238, .16)', 'rgba(167, 139, 250, .12)', 'rgba(245, 158, 11, .10)']
 
 function draw() {
+  // 根据当前 canvas 尺寸和设备像素比重绘雷达图，确保高分屏清晰。
   const canvas = canvasRef.value
   if (!canvas || !props.candidates.length) return
 
@@ -76,6 +82,7 @@ function draw() {
   ctx.clearRect(0, 0, width, height)
 
   for (let level = 1; level <= levels; level++) {
+    // 绘制从内到外的多边形网格。
     ctx.beginPath()
     dimensions.forEach((_, index) => {
       const angle = (Math.PI * 2 * index) / dimensions.length - Math.PI / 2
@@ -91,6 +98,7 @@ function draw() {
   }
 
   dimensions.forEach((dimension, index) => {
+    // 绘制每个质量属性的轴线和标签。
     const angle = (Math.PI * 2 * index) / dimensions.length - Math.PI / 2
     ctx.beginPath()
     ctx.moveTo(cx, cy)
@@ -106,6 +114,7 @@ function draw() {
   })
 
   for (let candidateIndex = count - 1; candidateIndex >= 0; candidateIndex--) {
+    // 从后往前绘制候选架构区域，保证首选架构线条显示在最上层。
     const scores = scoresFor(props.candidates[candidateIndex])
     ctx.beginPath()
     scores.forEach((score, index) => {

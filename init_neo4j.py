@@ -1,4 +1,9 @@
-"""Initialize or verify the Neo4j projection of the JSON architecture knowledge base."""
+"""初始化或验证 JSON 架构知识库在 Neo4j 中的投影。
+
+该脚本用于本地验收和演示：默认执行幂等对账，把 JSON 权威数据同步
+到 Neo4j；传入 --reset 会先清空旧图谱；传入 --verify-only 只读验证，
+不修改数据库。
+"""
 from __future__ import annotations
 
 import os
@@ -21,7 +26,7 @@ AUTH = (os.getenv("NEO4J_USER", "neo4j"), os.getenv("NEO4J_PASSWORD", ""))
 
 
 def verify_graph() -> dict:
-    """Return counts used by acceptance checks without mutating the graph."""
+    """只读统计图谱节点和关系数量，用于验收检查。"""
     driver = GraphDatabase.driver(URI, auth=AUTH)
     with driver.session() as session:
         row = session.run(
@@ -67,7 +72,7 @@ def verify_graph() -> dict:
 
 
 def graph_has_required_data(stats: dict, expected_styles: int | None = None) -> bool:
-    """Require an exact JSON style count and non-empty managed graph relations."""
+    """判断图谱是否包含与 JSON 一致的风格数量和必要关系数据。"""
     if expected_styles is None:
         expected_styles = len(load_normalized_styles())
     required_counts = (
@@ -83,7 +88,7 @@ def graph_has_required_data(stats: dict, expected_styles: int | None = None) -> 
 
 
 def init_graph(reset: bool = False) -> dict:
-    """Reconcile Neo4j from JSON, optionally clearing the existing demo graph first."""
+    """从 JSON 对账 Neo4j，必要时先清空已有演示图谱。"""
     kb = Neo4jKnowledgeBase()
     if not kb.is_available():
         raise ConnectionError(kb.unavailable_reason)
@@ -111,6 +116,7 @@ def init_graph(reset: bool = False) -> dict:
 
 
 def _print_verification(stats: dict) -> None:
+    """把图谱验证统计打印成适合命令行阅读的中文摘要。"""
     expected_styles = len(load_normalized_styles())
     print("\nNeo4j 图谱验证结果:")
     print(f"   ArchitectureStyle: {stats.get('styles', 0)} / {expected_styles}")

@@ -1,7 +1,9 @@
 <script setup lang="ts">
+// 决策溯源组件：把首选架构的推荐理由、备选风险和相似案例放在同一条证据链中展示。
 import type { Candidate } from './CandidateCards.vue'
 
 interface CaseMatch {
+  // Agent Runtime 从历史案例库中召回的相似需求摘要。
   prompt: string
   matched_terms?: string[]
   recommendations?: string[]

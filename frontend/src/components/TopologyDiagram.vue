@@ -1,7 +1,9 @@
 <script setup lang="ts">
+// 架构拓扑组件：优先渲染后端按需求生成的动态拓扑，缺失时回退到内置静态 SVG 模板。
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 export interface TopologyNode {
+  // 后端拓扑节点：x/y 是 SVG 画布坐标，hint 用于展示节点职责摘要。
   id: string
   label: string
   type: string
@@ -11,6 +13,7 @@ export interface TopologyNode {
 }
 
 export interface TopologyEdge {
+  // 后端拓扑边：from/to 引用节点 id，type 决定线条颜色和虚实样式。
   from: string
   to: string
   label?: string
@@ -18,6 +21,7 @@ export interface TopologyEdge {
 }
 
 export interface RequirementTopology {
+  // 完整需求拓扑模型，由 Agent Runtime 根据首选架构和需求特征生成。
   title: string
   style_key: string
   arch_name: string
@@ -31,12 +35,14 @@ const isExpanded = ref(false)
 const diagramFrame = ref<HTMLElement | null>(null)
 
 const hasDynamicTopology = computed(() => Boolean(props.topology?.nodes?.length))
+// dynamicNodeMap 和 dynamicEdges 把后端边的 from/to id 解析为真实节点，便于计算贝塞尔路径。
 const dynamicNodeMap = computed(() => new Map((props.topology?.nodes || []).map(node => [node.id, node])))
 const dynamicEdges = computed(() => (props.topology?.edges || [])
   .map(edge => ({ ...edge, source: dynamicNodeMap.value.get(edge.from), target: dynamicNodeMap.value.get(edge.to) }))
   .filter(edge => edge.source && edge.target))
 
 function nodeFill(type: string) {
+  // 根据节点类型选择渐变填充，让存储、事件、守卫和参与者在图上可区分。
   if (type === 'store') return 'url(#dyn-green)'
   if (type === 'agent') return 'url(#dyn-violet)'
   if (type === 'event') return 'url(#dyn-amber)'
@@ -46,6 +52,7 @@ function nodeFill(type: string) {
 }
 
 function edgeStroke(type = 'sync') {
+  // 根据边类型选择颜色：事件/流、命令、消息和同步调用分别强调。
   if (type === 'event' || type === 'stream') return '#34d399'
   if (type === 'command') return '#fbbf24'
   if (type === 'message') return '#c4b5fd'
@@ -53,10 +60,12 @@ function edgeStroke(type = 'sync') {
 }
 
 function shortText(value = '', limit = 13) {
+  // SVG 文本不自动换行，过长标签需要截断，避免节点和边标签重叠。
   return value.length > limit ? `${value.slice(0, limit - 1)}…` : value
 }
 
 function edgePath(edge: { source?: TopologyNode; target?: TopologyNode }) {
+  // 用三次贝塞尔曲线连接节点，竖向距离较小时加大控制点避免线条贴边。
   if (!edge.source || !edge.target) return ''
   const dx = Math.abs(edge.target.x - edge.source.x)
   if (dx < 80) {
@@ -121,6 +130,7 @@ const defs = `
 `
 
 function shell(title: string, subtitle: string, body: string) {
+  // 静态模板外壳：统一背景、标题栏和图例，body 只负责具体架构图形。
   return `
     ${defs}
     <rect x="16" y="16" width="928" height="508" rx="22" fill="url(#bg-panel)" stroke="#244564"/>
@@ -290,6 +300,7 @@ const diagrams: Record<string, string> = {
 }
 
 function pickKey(name: string) {
+  // 把候选架构名称映射到内置静态图模板键。
   const normalized = name.toLowerCase()
   if (normalized.includes('cqrs')) return 'cqrs'
   if (normalized.includes('microservice') || name.includes('微服务')) return 'microservices'
@@ -303,11 +314,13 @@ function pickKey(name: string) {
 const selectedSVG = computed(() => diagrams[pickKey(props.archName)] ?? diagrams.default)
 
 async function openExpanded() {
+  // 展开大图时优先请求浏览器全屏，失败也保留组件内放大状态。
   isExpanded.value = true
   await diagramFrame.value?.requestFullscreen?.()
 }
 
 function closeExpanded() {
+  // 关闭大图时同步退出浏览器全屏，避免 UI 状态和 fullscreenElement 不一致。
   isExpanded.value = false
   if (document.fullscreenElement) {
     void document.exitFullscreen()
@@ -315,16 +328,19 @@ function closeExpanded() {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  // 支持 Escape 快捷关闭大图，符合常见弹层交互预期。
   if (event.key === 'Escape') closeExpanded()
 }
 
 function handleFullscreenChange() {
+  // 用户按浏览器快捷键退出全屏时，同步更新组件展开状态。
   isExpanded.value = document.fullscreenElement === diagramFrame.value
 }
 
 onMounted(() => window.addEventListener('keydown', handleKeydown))
 onMounted(() => document.addEventListener('fullscreenchange', handleFullscreenChange))
 onBeforeUnmount(() => {
+  // 组件卸载时移除全局监听，避免路由切换后残留事件处理器。
   window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('fullscreenchange', handleFullscreenChange)
 })

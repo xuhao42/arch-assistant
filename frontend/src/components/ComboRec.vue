@@ -1,9 +1,11 @@
 ﻿<script setup lang="ts">
+// 推荐组合方案组件：用前两名候选架构生成可答辩说明的组合建议。
 import type { Candidate } from './CandidateCards.vue'
 
 defineProps<{ candidates: Candidate[] }>()
 
 function shortName(name: string) {
+  // 保留架构中文短名，减少组合文案中的视觉噪音。
   return name.replace(/\s*\(.+?\)/g, '').trim()
 }
 </script>

@@ -1,9 +1,11 @@
 ﻿<script setup lang="ts">
+// 报告面板组件：把后端 Markdown 风格评估报告转换为受控 HTML 展示。
 import { computed } from 'vue'
 
 const props = defineProps<{ report: string }>()
 
 function escapeHtml(value: string) {
+  // 先转义 HTML，再处理少量 Markdown，避免报告内容注入任意标签。
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -11,6 +13,7 @@ function escapeHtml(value: string) {
 }
 
 function inlineMarkdown(value: string) {
+  // 支持报告内常见的行内代码、加粗和斜体格式。
   return escapeHtml(value)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
@@ -18,6 +21,7 @@ function inlineMarkdown(value: string) {
 }
 
 function tableToHtml(lines: string[]) {
+  // 把 Markdown 表格行转换成带容器的 HTML 表格，方便横向滚动。
   const rows = lines
     .filter(line => !/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line))
     .map(line => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => inlineMarkdown(cell.trim())))
@@ -31,11 +35,13 @@ function tableToHtml(lines: string[]) {
 }
 
 function currentChineseDate() {
+  // 使用浏览器当前日期展示中文报告日期。
   const now = new Date()
   return `${now.getFullYear()}\u5e74${now.getMonth() + 1}\u6708${now.getDate()}\u65e5`
 }
 
 function normalizeGeneratedReportDates(text: string) {
+  // 修正模型可能复用示例日期的问题，让报告日期始终等于当前日期。
   return text.replace(
     /((?:\u62a5\u544a\u65e5\u671f|\u8bc4\u4f30\u65e5\u671f)\s*[:\uff1a](?:\*\*)?\s*)\d{4}\s*\u5e74\s*\d{1,2}\s*\u6708\s*\d{1,2}\s*\u65e5/g,
     `$1${currentChineseDate()}`,
@@ -43,6 +49,7 @@ function normalizeGeneratedReportDates(text: string) {
 }
 
 function renderMarkdown(text: string): string {
+  // 小型 Markdown 渲染器：只支持本项目报告需要的标题、列表、表格和段落。
   if (!text) return ''
 
   const normalized = normalizeGeneratedReportDates(text)
@@ -56,18 +63,21 @@ function renderMarkdown(text: string): string {
   let tableLines: string[] = []
 
   function flushList() {
+    // 在遇到块级边界时把暂存列表写入输出。
     if (!listItems.length) return
     output.push(`<ul>${listItems.map(item => `<li>${item}</li>`).join('')}</ul>`)
     listItems = []
   }
 
   function flushTable() {
+    // 表格必须连续收集多行，离开表格区域后再统一转换。
     if (!tableLines.length) return
     output.push(tableToHtml(tableLines))
     tableLines = []
   }
 
   function flushBlocks() {
+    // 同时收束列表和表格，避免不同块类型互相嵌套。
     flushList()
     flushTable()
   }

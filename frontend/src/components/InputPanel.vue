@@ -1,10 +1,12 @@
 <script setup lang="ts">
+// 需求输入组件：统一处理文本输入、示例填充、单次语音输入和连续语音通话。
 import { computed, ref } from 'vue'
 import { useSpeech } from '../composables/useSpeech'
 
 defineProps<{ isBusy?: boolean }>()
 
 const emit = defineEmits<{
+  // submit 用于文本/单次语音提交，callUtterance 用于连续语音通话的每轮累计需求。
   submit: [prompt: string, sessionId: string]
   callUtterance: [prompt: string, sessionId: string]
 }>()
@@ -21,6 +23,7 @@ const samplePrompts = [
 const canSend = computed(() => prompt.value.trim().length > 0)
 
 function submitPrompt(text = prompt.value) {
+  // 文本提交时生成新的 sessionId，让主应用能区分并发或连续请求。
   const value = text.trim()
   if (!value) return
   prompt.value = ''
@@ -28,10 +31,12 @@ function submitPrompt(text = prompt.value) {
 }
 
 function handleVoiceUtterance(text: string) {
+  // 连续通话每识别完一轮，就把累计后的完整需求作为一次分析输入。
   emit('callUtterance', text, crypto.randomUUID())
 }
 
 function toggleCall() {
+  // 通话按钮在开始和结束之间切换，实际识别循环由 useSpeech 维护。
   if (isCallActive.value) {
     stopCall()
   } else {
@@ -40,6 +45,7 @@ function toggleCall() {
 }
 
 async function handleMic() {
+  // 单次语音输入完成后自动提交，适合快速说出一个完整需求。
   if (isListening.value) {
     stopMic()
     return
@@ -49,7 +55,7 @@ async function handleMic() {
     prompt.value = text
     submitPrompt(text)
   } catch {
-    // Browser speech recognition can be cancelled or denied by the user.
+    // 浏览器语音识别可能被用户取消、拒绝授权或因设备不可用而失败。
   }
 }
 </script>

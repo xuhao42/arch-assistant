@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// 应用主壳层：负责串联输入面板、流式分析、候选架构展示、拓扑图和报告面板。
 import { computed, onBeforeUnmount, ref } from 'vue'
 import axios from 'axios'
 import CandidateCards, { type Candidate } from './components/CandidateCards.vue'
@@ -11,6 +12,7 @@ import ReportPanel from './components/ReportPanel.vue'
 import TopologyDiagram, { type RequirementTopology } from './components/TopologyDiagram.vue'
 
 interface AnalyzeResult {
+  // 后端分析结果在前端的统一形态；流式模式会分阶段填充这些字段。
   features: Record<string, any> | null
   candidates: Candidate[]
   topology: RequirementTopology | null
@@ -20,6 +22,7 @@ interface AnalyzeResult {
 }
 
 interface CaseMatch {
+  // 历史案例命中信息，用于展示知识进化和 few-shot 参考来源。
   prompt: string
   matched_terms?: string[]
   recommendations?: string[]
@@ -28,6 +31,7 @@ interface CaseMatch {
 }
 
 const theme = ref<'dark' | 'light'>('dark')
+// result 是整个工作台的核心状态，所有结果区组件都从这里派生展示数据。
 const result = ref<AnalyzeResult>({
   features: null,
   candidates: [],
@@ -39,10 +43,12 @@ const isAnalyzing = ref(false)
 const statusMessage = ref('')
 const errorMessage = ref('')
 let reportTimer: number | undefined
+// activeSessionId 用于屏蔽过期请求，避免上一次流式响应覆盖新一次分析结果。
 const activeSessionId = ref<string | null>(null)
 let streamController: AbortController | undefined
 
 const featureList = computed(() => {
+  // 后端可能把特征放在 features 或 key_requirements 中，这里合并去重后展示前 10 项。
   const features = result.value.features
   if (!features) return []
   const raw = [
@@ -57,10 +63,12 @@ const hasPartialResult = computed(() => Boolean(result.value.features || result.
 const appClasses = computed(() => ['min-h-screen app-shell', theme.value === 'light' ? 'theme-light' : 'theme-dark'])
 
 function toggleTheme() {
+  // 只切换当前页面状态，不写入本地存储，避免演示环境留下持久偏好。
   theme.value = theme.value === 'dark' ? 'light' : 'dark'
 }
 
 function emptyResult(): AnalyzeResult {
+  // 每次新分析前重置为完整空对象，确保子组件不会读到上一轮残留字段。
   return {
     features: null,
     candidates: [],
@@ -72,6 +80,7 @@ function emptyResult(): AnalyzeResult {
 }
 
 function stopReportTyping() {
+  // 报告打字机效果使用 interval；切换会话或卸载组件时必须清理。
   if (reportTimer) {
     window.clearInterval(reportTimer)
     reportTimer = undefined
@@ -79,10 +88,12 @@ function stopReportTyping() {
 }
 
 function isActiveSession(sessionId: string) {
+  // 所有异步回调进入状态更新前都先校验会话，避免竞态条件。
   return activeSessionId.value === sessionId
 }
 
 function typeReport(fullText: string, sessionId: string) {
+  // 把完整报告分片写入 result.report，形成逐字呈现效果。
   stopReportTyping()
   if (!isActiveSession(sessionId)) return
 
@@ -103,10 +114,12 @@ function typeReport(fullText: string, sessionId: string) {
 }
 
 function normalizeCandidates(value: unknown): Candidate[] {
+  // 防御后端异常返回，保证候选列表组件只接收数组。
   return Array.isArray(value) ? value as Candidate[] : []
 }
 
 function applyStreamEvent(data: any, sessionId: string) {
+  // 把后端 SSE 事件映射到前端状态；每个事件只更新自己负责的结果片段。
   if (!isActiveSession(sessionId)) return
 
   if (data.event === 'status') {
@@ -155,6 +168,7 @@ function applyStreamEvent(data: any, sessionId: string) {
 }
 
 async function analyzeWithStream(prompt: string, sessionId: string) {
+  // 首选 SSE 通道：用户可以更早看到特征、候选和拓扑，而不用等待完整报告。
   streamController = new AbortController()
   const response = await fetch('/api/v1/analyze/stream', {
     method: 'POST',
@@ -183,6 +197,7 @@ async function analyzeWithStream(prompt: string, sessionId: string) {
     if (done) break
 
     buffer += decoder.decode(value, { stream: true })
+    // SSE 事件以空行分隔；保留最后一个不完整 frame 等待下一段数据补齐。
     const frames = buffer.split('\n\n')
     buffer = frames.pop() || ''
 
@@ -195,6 +210,7 @@ async function analyzeWithStream(prompt: string, sessionId: string) {
 }
 
 async function analyzeWithFallback(prompt: string, sessionId: string) {
+  // 当 SSE 不可用时退回普通 HTTP 分析，保证功能仍可完成。
   const response = await axios.post('/api/v1/analyze', { prompt, session_id: sessionId }, { timeout: 180000 })
   if (!isActiveSession(sessionId)) return
 
@@ -211,6 +227,7 @@ async function analyzeWithFallback(prompt: string, sessionId: string) {
 }
 
 async function handleSubmit(prompt: string, sessionId: string) {
+  // 统一处理文本输入和语音输入：取消旧请求、重置状态、优先尝试流式分析。
   streamController?.abort()
   stopReportTyping()
   activeSessionId.value = sessionId
@@ -242,6 +259,7 @@ async function handleSubmit(prompt: string, sessionId: string) {
 }
 
 onBeforeUnmount(() => {
+  // 组件卸载时终止网络流和计时器，避免后台继续写状态。
   streamController?.abort()
   stopReportTyping()
 })

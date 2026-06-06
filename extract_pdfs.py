@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Extract all PDFs from 软件体系结构参考资料 into RAG-ready chunks."""
+"""把软件体系结构课程 PDF 抽取成 RAG 可用的文本切片。
+
+脚本遍历指定资料目录中的 PDF，抽取每页文本，按段落和长度拆分后写入
+data/rag_chunks/chunks.json，同时输出 full_text.txt 方便人工检查。
+"""
 import pymupdf, os, json
 
 PDF_DIR = "/mnt/e/项目/大作业/软件体系结构参考资料"
@@ -22,17 +26,17 @@ for pdf_file in pdfs:
         if text:
             full_text += f"\n--- Page {i+1} ---\n{text}"
     
-    # Chunk by natural boundaries: double newlines, then page breaks
+    # 先按较自然的空行边界切片，尽量保留课程段落语义。
     raw_chunks = full_text.split("\n\n\n")
     
     for ci, chunk in enumerate(raw_chunks):
         chunk = chunk.strip()
-        if len(chunk) < 50:  # skip tiny fragments
+        if len(chunk) < 50:  # 跳过太短的页眉、页脚或孤立碎片。
             continue
         
-        # If chunk is too long, split further
+        # 过长切片继续按段落拆分，避免单个 chunk 超过提示词可控范围。
         if len(chunk) > 2000:
-            # Split by paragraph (single newline)
+            # 按单换行段落累积到约 1500 字符后落盘为一个切片。
             paragraphs = [p.strip() for p in chunk.split("\n") if p.strip()]
             current = ""
             for p in paragraphs:
@@ -58,11 +62,11 @@ for pdf_file in pdfs:
                 "text": chunk
             })
 
-# Save chunks
+# 保存结构化切片，供索引构建脚本读取。
 with open(os.path.join(OUT_DIR, "chunks.json"), "w", encoding="utf-8") as f:
     json.dump(all_chunks, f, ensure_ascii=False, indent=2)
 
-# Also save a raw combined text for reference
+# 额外保存合并文本，便于人工检查抽取质量和资料来源。
 with open(os.path.join(OUT_DIR, "full_text.txt"), "w", encoding="utf-8") as f:
     for c in all_chunks:
         f.write(f"\n\n=== {c['source']} ===\n{c['text']}")

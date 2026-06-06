@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+/* 全局主题变量：深色主题为默认，浅色主题通过 .theme-light 覆盖变量。 */
 :root {
   color-scheme: dark;
   font-family: "Microsoft YaHei", Inter, ui-sans-serif, system-ui, sans-serif;
@@ -33,6 +34,7 @@ textarea {
   font: inherit;
 }
 
+/* 应用级背景和顶部框架，负责形成工作台整体视觉层级。 */
 .app-shell {
   min-height: 100vh;
   color: var(--text-main);
@@ -61,6 +63,7 @@ textarea {
   -webkit-backdrop-filter: blur(18px) saturate(125%);
 }
 
+/* 浅色主题覆盖：只改变量和必要的局部颜色，不改组件结构。 */
 .theme-light {
   color-scheme: light;
   --bg-start: #eaf7ff;
@@ -105,6 +108,7 @@ textarea {
   color: var(--text-muted) !important;
 }
 
+/* 通用面板和顶部概览卡片，多个组件共用 glass/metric 样式。 */
 .glass {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -165,6 +169,7 @@ textarea {
   font-size: 0.76rem;
 }
 
+/* 输入区与工具按钮，覆盖文本提交、语音输入、通话和示例场景按钮。 */
 .toolbar-button,
 .primary-action,
 .sample-button {
@@ -232,6 +237,7 @@ textarea {
   line-height: 1.55;
 }
 
+/* 推荐结果区域：特征标签、候选卡片、规则提示和分数圆点。 */
 .feature-chip {
   border: 1px solid rgba(34, 211, 238, 0.22);
   border-radius: 999px;
@@ -297,6 +303,7 @@ textarea {
   box-shadow: 0 12px 28px color-mix(in srgb, var(--score-accent), transparent 70%);
 }
 
+/* 决策溯源与组合建议，用于解释推荐理由、备选风险和架构演进路径。 */
 .trace-row {
   display: flex;
   gap: 12px;
@@ -358,6 +365,7 @@ textarea {
   font-size: 1.125rem;
 }
 
+/* 拓扑图交互：普通嵌入态、悬浮提示、全屏大图和关闭按钮。 */
 .topology-click-target {
   position: relative;
   cursor: zoom-in;
@@ -451,6 +459,7 @@ textarea {
   }
 }
 
+/* 报告正文排版：控制 Markdown 渲染后的标题、段落、列表、代码和表格。 */
 .md-content h2,
 .md-content h3,
 .md-content h4 {
@@ -560,6 +569,7 @@ textarea {
   border-bottom: 0;
 }
 
+/* 轻量动画：结果卡片进入和报告打字机光标闪烁。 */
 @keyframes fadeInUp {
   from {
     opacity: 0;
@@ -606,6 +616,7 @@ textarea {
   background: rgba(34, 211, 238, 0.12);
 }
 
+/* 滚动条仅做弱化处理，避免抢占报告和拓扑区域的视觉焦点。 */
 ::-webkit-scrollbar {
   width: 8px;
 }

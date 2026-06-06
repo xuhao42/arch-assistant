@@ -1,4 +1,9 @@
-"""LLM Router - API for LLM inference with DeepSeek + OpenAI compatible providers."""
+"""LLM Router 服务入口。
+
+该服务把项目内部的模型调用统一封装成 OpenAI 兼容接口，
+当前默认代理 DeepSeek，用于报告润色、通用生成和流式生成。
+编排层只依赖这里的稳定 API，不直接暴露第三方模型细节。
+"""
 import os, asyncio, json, time
 from contextlib import asynccontextmanager
 import httpx
@@ -7,16 +12,19 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel
 
-# ── Models ─────────────────────────────────────────
+# ── 请求/响应模型：描述内部服务调用 LLM Router 的协议 ──
 class RouteRequest(BaseModel):
+    """模型路由请求，当前只保留 prompt 以便后续扩展多模型选择。"""
     prompt: str
 
 class RouteResponse(BaseModel):
+    """模型路由结果，告诉调用方应该使用哪个 provider/model。"""
     model: str
     provider: str
     confidence: float
 
 class GenerateRequest(BaseModel):
+    """非流式或流式生成请求，采用 OpenAI Chat Completions 风格消息数组。"""
     messages: list[dict]
     model: str | None = None
     temperature: float = 0.7
@@ -24,12 +32,13 @@ class GenerateRequest(BaseModel):
     provider: str = "deepseek"
 
 class GenerateResponse(BaseModel):
+    """非流式生成接口的统一响应。"""
     content: str
     model: str
     provider: str
     usage: dict | None = None
 
-# ── Config ─────────────────────────────────────────
+# ── 配置：第三方模型地址、密钥和默认系统提示词 ──
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 DEFAULT_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
@@ -42,9 +51,10 @@ SYSTEM_PROMPT = """你是一个软件架构设计专家助手。你擅长：
 
 请用专业、简洁的中文回答。如果用户问的问题不涉及软件架构，礼貌地引导回架构话题。"""
 
-# ── App ────────────────────────────────────────────
+# ── 应用入口：维护共享 HTTP 客户端并暴露模型代理路由 ──
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """FastAPI 生命周期钩子，创建并释放上游模型 API 客户端。"""
     app.state.http_client = httpx.AsyncClient(timeout=120.0, limits=httpx.Limits(max_keepalive_connections=8))
     logger.info(f"LLM Router ready. Provider: deepseek, Model: {DEFAULT_MODEL}")
     yield
@@ -54,19 +64,20 @@ app = FastAPI(title="Architecture LLM Router", version="1.0.0", lifespan=lifespa
 
 @app.get("/health")
 async def health():
+    """健康检查接口，同时返回当前默认 provider 和模型名。"""
     return {"service": "llm-router", "status": "healthy", "provider": "deepseek", "model": DEFAULT_MODEL}
 
 @app.post("/api/v1/route", response_model=RouteResponse)
 async def route_prompt(body: RouteRequest):
-    """简单路由：全部直连 DeepSeek"""
+    """简单模型路由：当前版本全部直连 DeepSeek。"""
     return RouteResponse(model=DEFAULT_MODEL, provider="deepseek", confidence=1.0)
 
 @app.post("/api/v1/generate", response_model=GenerateResponse)
 async def generate(request: GenerateRequest, req: Request):
-    """调用 DeepSeek API 生成回复"""
+    """调用 DeepSeek 非流式接口生成完整回复。"""
     client = req.app.state.http_client
     
-    # Add system prompt if not present
+    # 如果调用方没有提供 system 消息，则补入架构助手默认角色，统一输出风格。
     msgs = request.messages
     if not any(m.get("role") == "system" for m in msgs):
         msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + msgs
@@ -112,7 +123,7 @@ async def generate(request: GenerateRequest, req: Request):
 
 @app.post("/api/v1/generate/stream")
 async def generate_stream(request: GenerateRequest, req: Request):
-    """流式生成"""
+    """调用 DeepSeek 流式接口，并转换成项目内部使用的 NDJSON 增量格式。"""
     client = req.app.state.http_client
     
     msgs = request.messages
@@ -128,6 +139,7 @@ async def generate_stream(request: GenerateRequest, req: Request):
     }
     
     async def stream():
+        """内部流式生成器，把上游 data: chunk 转成 JSON 行。"""
         async with client.stream(
             "POST", f"{DEEPSEEK_BASE_URL}/chat/completions",
             json=payload,

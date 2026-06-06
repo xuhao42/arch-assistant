@@ -1,5 +1,9 @@
-"""RAG module for arch-assistant — TF-IDF retrieval with jieba tokenization.
-Self-contained: builds index on first load, no pickle dependencies."""
+"""课程资料 RAG 检索模块。
+
+这里使用 jieba 分词 + TF-IDF 做轻量文本召回，第一次查询时从
+data/rag_chunks/chunks.json 构建内存索引，不依赖 pickle 产物。
+Agent 在生成报告前可把召回片段拼进提示词，补充课程讲义背景。
+"""
 import json, os
 import jieba
 import numpy as np
@@ -9,13 +13,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 INDEX_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "rag_index")
 CHUNKS_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "rag_chunks", "chunks.json")
 
-# Lazy-load globals
+# 延迟加载的全局索引对象：服务启动时不立刻占用内存，首次检索时再初始化。
 _vectorizer = None
 _tfidf_matrix = None
 _chunks = None
 
 def _build_index():
-    """Build TF-IDF index from chunks on first load."""
+    """从课程资料切片构建 TF-IDF 索引。"""
     global _vectorizer, _tfidf_matrix, _chunks
     
     with open(CHUNKS_FILE, "r", encoding="utf-8") as f:
@@ -32,11 +36,16 @@ def _build_index():
     _tfidf_matrix = _vectorizer.fit_transform(texts)
 
 def _ensure_index():
+    """确保索引已经构建，作为所有公开检索函数的轻量前置检查。"""
     if _vectorizer is None:
         _build_index()
 
 def retrieve(query: str, top_k: int = 5) -> list[str]:
-    """Search RAG index and return top-k relevant text chunks."""
+    """按查询文本召回最相关的课程资料片段。
+
+    输入是用户需求或中间分析文本，输出是按余弦相似度排序后的文本切片。
+    低于阈值的片段会被丢弃，避免无关资料污染 LLM 上下文。
+    """
     _ensure_index()
     q_vec = _vectorizer.transform([query])
     scores = cosine_similarity(q_vec, _tfidf_matrix).flatten()
@@ -49,7 +58,7 @@ def retrieve(query: str, top_k: int = 5) -> list[str]:
     return results
 
 def retrieve_context(query: str, max_chars: int = 1500, top_k: int = 5) -> str:
-    """Retrieve and format context for LLM prompt."""
+    """召回资料并格式化成可直接拼接到 LLM 提示词中的中文上下文。"""
     chunks = retrieve(query, top_k)
     if not chunks:
         return ""

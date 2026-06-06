@@ -1,3 +1,4 @@
+"""验证架构风格 JSON 数据访问和归一化工具的稳定性。"""
 import importlib.util
 import json
 import os
@@ -19,6 +20,7 @@ MODULE_PATH = (
 
 
 def load_module():
+    """动态加载 architecture_styles.py，确保每个测试获得独立模块实例。"""
     spec = importlib.util.spec_from_file_location("test_architecture_styles_module", MODULE_PATH)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -28,6 +30,7 @@ def load_module():
 
 
 class ArchitectureStyleTests(unittest.TestCase):
+    """覆盖 JSON 规模、字段归一化、原子追加和摘要格式的回归测试。"""
     def test_repository_json_contains_21_parseable_styles(self):
         module = load_module()
         styles = module.load_styles(ROOT / "data" / "architecture_styles.json")

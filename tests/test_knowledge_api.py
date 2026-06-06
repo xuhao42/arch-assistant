@@ -1,3 +1,8 @@
+"""验证 Agent Runtime 在线知识库接口的回退行为。
+
+这些测试不启动真实 FastAPI 服务，而是动态加载 main.py 并替换图谱依赖，
+确保新增知识写入 JSON 成功后，即使 Neo4j 同步失败也能给出明确 fallback 状态。
+"""
 import asyncio
 import importlib.util
 import sys
@@ -12,6 +17,7 @@ RUNTIME = ROOT / "apps" / "agent-runtime" / "agent_runtime"
 
 
 def load_module(name: str, path: Path):
+    """按文件路径动态加载模块，绕开项目包名中连字符带来的导入问题。"""
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -21,6 +27,7 @@ def load_module(name: str, path: Path):
 
 
 def load_main():
+    """加载 agent_runtime.main，并用最小假 graph 模块隔离 LangGraph 依赖。"""
     package = types.ModuleType("agent_runtime")
     package.__path__ = [str(RUNTIME)]
     sys.modules["agent_runtime"] = package
@@ -35,6 +42,7 @@ def load_main():
 
 
 class FakeKnowledgeBase:
+    """可配置同步结果的假 Neo4j 知识库。"""
     def __init__(self, synced: bool):
         self.synced = synced
 
@@ -43,11 +51,13 @@ class FakeKnowledgeBase:
 
 
 class RaisingKnowledgeBase:
+    """模拟 Neo4j 写入时抛异常的知识库对象。"""
     def upsert_style(self, style):
         raise RuntimeError("neo4j write failed")
 
 
 class KnowledgeApiTests(unittest.TestCase):
+    """覆盖新增知识接口在图谱同步成功、失败和异常时的返回语义。"""
     def test_add_knowledge_returns_synced_status_when_neo4j_upsert_succeeds(self):
         module = load_main()
         with patch.object(module, "append_style_atomic", return_value=[{"name": "New"}]), \

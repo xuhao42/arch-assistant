@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// 特征标签组件：展示需求解析 Agent 提取出的关键词和关键非功能需求。
 defineProps<{ features: string[] }>()
 </script>
 

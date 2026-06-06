@@ -35,11 +35,13 @@ class Neo4jKnowledgeBase:
 
     @property
     def driver(self):
+        """按需创建 Neo4j 驱动，避免模块导入阶段就要求数据库在线。"""
         if self._driver is None:
             self._driver = GraphDatabase.driver(self.uri, auth=self.auth)
         return self._driver
 
     def _mark_unavailable(self, error: Exception, operation: str) -> None:
+        """记录 Neo4j 不可用原因，并让后续查询在冷却期内走 JSON fallback。"""
         self._available = False
         self._last_failure_at = time.monotonic()
         self._reconcile_required = True
@@ -67,12 +69,14 @@ class Neo4jKnowledgeBase:
         return self._available
 
     def _create_schema(self, session) -> None:
+        """创建图谱约束和索引，保证风格名称唯一并加速常用查询。"""
         session.run("CREATE CONSTRAINT architecture_style_name IF NOT EXISTS FOR (s:ArchitectureStyle) REQUIRE s.name IS UNIQUE")
         session.run("CREATE INDEX characteristic_name IF NOT EXISTS FOR (c:Characteristic) ON (c.name)")
         session.run("CREATE INDEX usecase_name IF NOT EXISTS FOR (u:UseCase) ON (u.name)")
         session.run("CREATE INDEX keyword_name IF NOT EXISTS FOR (k:Keyword) ON (k.name)")
 
     def _upsert_style(self, session, style: dict) -> None:
+        """把一条归一化架构风格写入图谱，并重建其属性关系。"""
         name = style["name"]
         session.run("""
             MERGE (s:ArchitectureStyle {name: $name})
@@ -113,7 +117,11 @@ class Neo4jKnowledgeBase:
             """, name=name, keyword=keyword)
 
     def upsert_style(self, style: dict) -> bool:
-        """Synchronize one JSON style after an online append."""
+        """在线新增知识后，把单条 JSON 风格同步到 Neo4j。
+
+        如果图谱刚从不可用状态恢复，会先执行全量对账，避免单条更新建立在
+        过期图谱上；失败时返回 False，让接口明确告知前端已回退到 JSON。
+        """
         if not self.is_available():
             return False
         if self._reconcile_required:
@@ -129,6 +137,7 @@ class Neo4jKnowledgeBase:
             return False
 
     def _sync_relations(self, session, relations: list[dict[str, str]]) -> None:
+        """重建架构风格之间的互补和相关关系边。"""
         session.run("""
             MATCH (:ArchitectureStyle)-[r:COMPLEMENTS|RELATED_TO]->(:ArchitectureStyle)
             DELETE r
@@ -148,7 +157,7 @@ class Neo4jKnowledgeBase:
         styles: Optional[list[dict]] = None,
         relations: Optional[list[dict[str, str]]] = None,
     ) -> bool:
-        """Make all JSON-managed Neo4j data match the authoritative files."""
+        """让 Neo4j 中由 JSON 管理的节点和关系与权威文件完全一致。"""
         if not self.is_available():
             return False
         normalized_styles = styles if styles is not None else load_normalized_styles()
@@ -177,6 +186,7 @@ class Neo4jKnowledgeBase:
             return False
 
     def _ensure_synced(self) -> bool:
+        """确保图谱可用且完成对账，供所有查询入口统一复用。"""
         if not self.is_available():
             return False
         if self._reconcile_required:
@@ -185,10 +195,11 @@ class Neo4jKnowledgeBase:
 
     @property
     def unavailable_reason(self) -> str:
+        """返回最近一次 Neo4j 不可用的原因，便于健康检查和排障展示。"""
         return self._unavailable_reason
 
     def get_graph_stats(self) -> dict:
-        """Return key node/relation counts for acceptance demo and health check."""
+        """返回关键节点/关系数量，用于验收演示和健康检查。"""
         if not self._ensure_synced():
             return {}
         try:
@@ -215,7 +226,7 @@ class Neo4jKnowledgeBase:
             return {}
 
     def get_all_styles_summary(self) -> list[dict]:
-        """获取所有架构风格的摘要信息（含优缺点的扁平列表）"""
+        """获取所有架构风格摘要，输出扁平优缺点列表供提示词和 API 使用。"""
         if not self._ensure_synced():
             return []
         try:
@@ -241,7 +252,7 @@ class Neo4jKnowledgeBase:
             return []
 
     def get_styles_by_keyword(self, keywords: list[str], limit: int = 5) -> list[dict]:
-        """根据关键词匹配架构风格（用于规则引擎触发）"""
+        """根据需求关键词匹配架构风格，用作规则引擎和提示词增强的触发器。"""
         if not self._ensure_synced():
             return []
         try:
@@ -267,7 +278,7 @@ class Neo4jKnowledgeBase:
             return []
 
     def get_style_detail(self, style_name: str) -> Optional[dict]:
-        """获取单个架构风格的完整信息"""
+        """获取单个架构风格的完整图谱信息，包含优缺点、场景和关联风格。"""
         if not self._ensure_synced():
             return None
         try:
@@ -297,7 +308,7 @@ class Neo4jKnowledgeBase:
             return None
 
     def get_complementary_styles(self, style_name: str) -> list[dict]:
-        """获取某个架构风格的互补架构（通过 COMPLEMENTS 边）"""
+        """获取某个架构风格的互补架构，正向和反向 COMPLEMENTS 边都会查询。"""
         if not self._ensure_synced():
             return []
         try:
@@ -379,6 +390,7 @@ class Neo4jKnowledgeBase:
             return ""
 
     def close(self):
+        """关闭 Neo4j 驱动连接，供服务退出或测试清理使用。"""
         if self._driver:
             self._driver.close()
             self._driver = None
